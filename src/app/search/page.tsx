@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-// If the build complains about '@', replace with: import { supabase } from '../../lib/supabaseClient';
 import { supabase } from '@/lib/supabaseClient';
+
+type InputChange = React.ChangeEvent<HTMLInputElement>;
+type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
 const TABLE = 'vehicles';
 const COLUMNS = [
@@ -18,32 +20,48 @@ function useDebounce<T>(val: T, ms = 400) {
 }
 
 export default function SearchPage() {
-  const [filters, setFilters] = useState({ vin:'', make:'', model:'', yearFrom:'', yearTo:'', wovr_status:'', sold_status:'', priceMin:'', priceMax:'', auction_house:'' });
+  const [filters, setFilters] = useState({
+    vin:'', make:'', model:'', yearFrom:'', yearTo:'',
+    wovr_status:'', sold_status:'', priceMin:'', priceMax:'', auction_house:''
+  });
   const debounced = useDebounce(filters, 400);
+
   const [rows, setRows] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [opts, setOpts] = useState<{[k:string]: string[]}>({ make:[], model:[], wovr_status:[], sold_status:[], auction_house:[] });
-  const [sort, setSort] = useState<{column: string; direction: 'asc'|'desc'}>({ column:'created_at', direction:'desc' });
+
+  const [opts, setOpts] = useState<Record<string, string[]>>({
+    make:[], model:[], wovr_status:[], sold_status:[], auction_house:[]
+  });
+
+  const [sort, setSort] = useState<{column: string; direction: 'asc'|'desc'}>({
+    column:'created_at', direction:'desc'
+  });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(()=> Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  useEffect(() => { (async () => {
-    try {
-      const keys = ['make','model','wovr_status','sold_status','auction_house'];
-      const next:any = {};
-      for (const k of keys) {
-        const { data, error } = await supabase.from(TABLE).select(k).not(k,'is',null).neq(k,'').order(k,{ascending:true}).limit(1000);
-        if (error) throw error;
-        next[k] = Array.from(new Set((data||[]).map((r:any)=>r[k]).filter(Boolean)));
+  useEffect(() => {
+    (async () => {
+      try {
+        const keys = ['make','model','wovr_status','sold_status','auction_house'];
+        const next: Record<string,string[]> = {};
+        for (const k of keys) {
+          const { data, error } = await supabase
+            .from(TABLE).select(k).not(k,'is',null).neq(k,'').order(k,{ascending:true}).limit(1000);
+          if (error) throw error;
+          next[k] = Array.from(new Set((data||[]).map((r:any)=>r[k]).filter(Boolean)));
+        }
+        setOpts(next);
+      } catch (e:any) {
+        console.warn('Dropdown load failed:', e.message);
       }
-      setOpts(next);
-    } catch(e:any){ console.warn('Dropdown load failed', e.message); }
-  })(); }, []);
+    })();
+  }, []);
 
-  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [debounced, sort, page, pageSize]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
 
   async function fetchData() {
     setLoading(true); setError('');
@@ -68,12 +86,17 @@ export default function SearchPage() {
       const { data, error, count } = await q;
       if (error) throw error;
       setRows(data || []); setTotal(count || 0);
-    } catch(e:any){ setError(e.message || 'Failed to fetch'); }
-    finally { setLoading(false); }
+    } catch (e:any) {
+      setError(e.message || 'Failed to fetch');
+    } finally { setLoading(false); }
   }
 
-  function update(k:string, v:string){ setPage(1); setFilters(s=>({ ...s, [k]: v })); }
-  function toggleSort(col:string){ setSort(s=>({ column: col, direction: s.column===col && s.direction==='asc' ? 'desc' : 'asc' })); }
+  function update(k: string, v: string){ setPage(1); setFilters(s => ({ ...s, [k]: v })); }
+  function onInput(k:string){ return (e: InputChange) => update(k, e.target.value); }
+  function onSelect(k:string){ return (e: SelectChange) => update(k, e.target.value); }
+  function toggleSort(col:string){
+    setSort(s => ({ column: col, direction: s.column===col && s.direction==='asc' ? 'desc' : 'asc' }));
+  }
 
   return (
     <div className="mx-auto max-w-7xl p-6">
@@ -81,17 +104,17 @@ export default function SearchPage() {
 
       <div className="rounded-lg border p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          <Field label="VIN (exact)"><input className="input" value={filters.vin} onChange={e=>update('vin', e.target.value)} placeholder="MR0FZ22G401062065" /></Field>
-          <Field label="Make"><Select value={filters.make} onChange={e=>update('make', e.target.value)} options={opts.make}/></Field>
-          <Field label="Model"><Select value={filters.model} onChange={e=>update('model', e.target.value)} options={opts.model}/></Field>
-          <Field label="Year (From)"><input className="input" type="number" value={filters.yearFrom} onChange={e=>update('yearFrom', e.target.value)} /></Field>
-          <Field label="Year (To)"><input className="input" type="number" value={filters.yearTo} onChange={e=>update('yearTo', e.target.value)} /></Field>
-          <Field label="WOVR Status"><Select value={filters.wovr_status} onChange={e=>update('wovr_status', e.target.value)} options={opts.wovr_status}/></Field>
-          <Field label="Sold Status"><Select value={filters.sold_status} onChange={e=>update('sold_status', e.target.value)} options={opts.sold_status}/></Field>
-          <Field label="Price Min"><input className="input" type="number" value={filters.priceMin} onChange={e=>update('priceMin', e.target.value)} /></Field>
-          <Field label="Price Max"><input className="input" type="number" value={filters.priceMax} onChange={e=>update('priceMax', e.target.value)} /></Field>
-          <Field label="Auction House"><Select value={filters.auction_house} onChange={e=>update('auction_house', e.target.value)} options={opts.auction_house}/></Field>
-          <div className="flex items-end"><button className="btn" onClick={fetchData} disabled={loading}>{loading?'Loading…':'Search'}</button></div>
+          <Field label="VIN (exact)"><input className="input" value={filters.vin} onChange={onInput('vin')} placeholder="MR0FZ22G401062065" /></Field>
+          <Field label="Make"><Select value={filters.make} onChange={onSelect('make')} options={opts.make} /></Field>
+          <Field label="Model"><Select value={filters.model} onChange={onSelect('model')} options={opts.model} /></Field>
+          <Field label="Year (From)"><input className="input" type="number" value={filters.yearFrom} onChange={onInput('yearFrom')} /></Field>
+          <Field label="Year (To)"><input className="input" type="number" value={filters.yearTo} onChange={onInput('yearTo')} /></Field>
+          <Field label="WOVR Status"><Select value={filters.wovr_status} onChange={onSelect('wovr_status')} options={opts.wovr_status} /></Field>
+          <Field label="Sold Status"><Select value={filters.sold_status} onChange={onSelect('sold_status')} options={opts.sold_status} /></Field>
+          <Field label="Price Min"><input className="input" type="number" value={filters.priceMin} onChange={onInput('priceMin')} /></Field>
+          <Field label="Price Max"><input className="input" type="number" value={filters.priceMax} onChange={onInput('priceMax')} /></Field>
+          <Field label="Auction House"><Select value={filters.auction_house} onChange={onSelect('auction_house')} options={opts.auction_house} /></Field>
+          <div className="flex items-end"><button className="btn" onClick={fetchData} disabled={loading}>{loading ? 'Loading…' : 'Search'}</button></div>
         </div>
       </div>
 
@@ -99,7 +122,7 @@ export default function SearchPage() {
         <div className="flex items-center justify-between p-4 border-b">
           <div className="text-sm">Results <span className="ml-2 rounded-full bg-black/10 px-2 py-0.5">{total.toLocaleString()} items</span></div>
           <div className="flex items-center gap-2">
-            <select className="input w-28" value={String(pageSize)} onChange={e=>setPageSize(Number(e.target.value))}>
+            <select className="input w-28" value={String(pageSize)} onChange={(e: SelectChange)=>setPageSize(Number(e.target.value))}>
               {[10,25,50,100].map(n=> <option key={n} value={String(n)}>{n} / page</option>)}
             </select>
             <button className="btn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page<=1}>Prev</button>
@@ -170,7 +193,13 @@ function Field({label, children}:{label:string;children:any}) {
   );
 }
 
-function Select({value, onChange, options}:{value:string; onChange:any; options:string[]}) {
+function Select({
+  value, onChange, options,
+}:{
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  options: string[];
+}) {
   return (
     <select className="input" value={value} onChange={onChange}>
       <option value="">All</option>
