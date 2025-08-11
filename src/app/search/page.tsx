@@ -8,7 +8,7 @@ type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
 const TABLE = 'vehicles';
 
-// Actual columns (includes buyer_number now)
+// Actual columns (includes buyer_number)
 const COLUMNS = [
   'id','title','make','model','sub_model','year','vin','odometer',
   'wovr_status','sale_status','sold_price','sold_date',
@@ -30,7 +30,7 @@ const DISPLAY: [string, string][] = [
   ['auction_house','House'],
   ['stock_no','Stock #'],
   ['auction_number','Auction #'],
-  ['buyer_number','Buyer #'],   // ← new column
+  ['buyer_number','Buyer #'],
   ['state','State'],
 ];
 
@@ -40,6 +40,34 @@ function useDebounce<T>(val: T, ms = 400) {
   const [v, setV] = useState(val);
   useEffect(() => { const id = setTimeout(()=>setV(val), ms); return ()=>clearTimeout(id); }, [val, ms]);
   return v;
+}
+
+// Inline theme toggle (no extra file)
+function ThemeToggleButton() {
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('theme') as 'light'|'dark'|null;
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const initial = stored ?? (prefersDark ? 'dark' : 'light');
+      setTheme(initial);
+      document.documentElement.classList.toggle('dark', initial === 'dark');
+    } catch {}
+  }, []);
+
+  function toggle() {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    document.documentElement.classList.toggle('dark', next === 'dark');
+    try { localStorage.setItem('theme', next); } catch {}
+  }
+
+  return (
+    <button className="btn" onClick={toggle} aria-label="Toggle theme">
+      {theme === 'dark' ? '🌙 Dark' : '☀️ Light'}
+    </button>
+  );
 }
 
 export default function SearchPage() {
@@ -66,7 +94,7 @@ export default function SearchPage() {
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(()=> Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // ---- options via RPCs you created earlier ----
+  // ---- dropdowns via RPCs ----
   async function loadAllOptions(make?: string) {
     setOptsLoading(true);
     const [
@@ -131,7 +159,7 @@ export default function SearchPage() {
       // VIN exact (case-insensitive)
       if (f.vin.trim()) q = q.ilike('vin', f.vin.trim());
 
-      // Buyer number exact (case-insensitive), matches vehicles.buyer_number
+      // Buyer number exact (case-insensitive)
       if (f.buyer_no.trim()) q = q.ilike('buyer_number', f.buyer_no.trim());
 
       if (f.make) q = q.eq('make', f.make);
@@ -174,7 +202,10 @@ export default function SearchPage() {
 
   return (
     <div className="mx-auto max-w-7xl p-6">
-      <h1 className="text-2xl font-semibold mb-4">WreckWatch Search</h1>
+      <div className="mb-4 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">WreckWatch Search</h1>
+        <ThemeToggleButton />
+      </div>
 
       {/* Filters */}
       <div className="rounded-lg border p-4 mb-6">
@@ -254,7 +285,7 @@ export default function SearchPage() {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-black/5">
+            <thead className="themable">
               <tr>
                 {DISPLAY.map(([id,label]) => (
                   <th key={id} onClick={()=>toggleSort(id)} className="px-3 py-2 text-left cursor-pointer">
@@ -269,7 +300,7 @@ export default function SearchPage() {
             <tbody>
               {rows.length === 0 && !loading && <tr><td colSpan={DISPLAY.length} className="p-8 text-center text-gray-400">No results.</td></tr>}
               {rows.map(r => (
-                <tr key={r.id} className="border-t hover:bg-black/5">
+                <tr key={r.id} className="border-t themable">
                   {DISPLAY.map(([id]) => (
                     <td key={id} className="px-3 py-2">
                       {id === 'sold_date' && r.sold_date ? new Date(r.sold_date).toLocaleString()
@@ -287,8 +318,42 @@ export default function SearchPage() {
       </div>
 
       <style jsx global>{`
-        .input { height: 38px; border: 1px solid rgba(0,0,0,.1); border-radius: 10px; padding: 0 10px; background: white; color: #111; }
-        .btn { height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,.12); background: white; }
+        :root {
+          --bg: #ffffff;
+          --fg: #111111;
+          --card: #ffffff;
+          --border: rgba(0,0,0,.12);
+          --muted: rgba(0,0,0,.05);
+          --hover: rgba(0,0,0,.05);
+        }
+        .dark {
+          --bg: #0c0d10;
+          --fg: #f3f4f6;
+          --card: #111317;
+          --border: rgba(255,255,255,.16);
+          --muted: rgba(255,255,255,.06);
+          --hover: rgba(255,255,255,.06);
+        }
+        html, body { background: var(--bg); color: var(--fg); }
+
+        /* Inputs & buttons */
+        .input {
+          height: 38px; border: 1px solid var(--border);
+          border-radius: 10px; padding: 0 10px;
+          background: var(--card); color: var(--fg);
+        }
+        .btn {
+          height: 36px; padding: 0 12px; border-radius: 10px;
+          border: 1px solid var(--border); background: var(--card); color: var(--fg);
+        }
+
+        /* Cards & borders */
+        .border { border-color: var(--border) !important; }
+        .border-t { border-top-color: var(--border) !important; }
+
+        /* Table theming */
+        thead.themable { background: var(--muted); }
+        tr.themable:hover { background: var(--hover); }
       `}</style>
     </div>
   );
@@ -297,7 +362,7 @@ export default function SearchPage() {
 function Field({label, children}:{label:string;children:any}) {
   return (
     <label className="flex flex-col gap-1 text-sm">
-      <span className="text-gray-600">{label}</span>
+      <span className="text-gray-600 dark:text-gray-300">{label}</span>
       {children}
     </label>
   );
@@ -318,4 +383,5 @@ function Select({
     </select>
   );
 }
+
 
