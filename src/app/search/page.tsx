@@ -8,15 +8,14 @@ type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
 const TABLE = 'vehicles';
 
-// Columns that actually exist in your table
+// Your actual columns
 const COLUMNS = [
   'id','title','make','model','sub_model','year','vin','odometer',
   'wovr_status','sale_status','sold_price','sold_date',
   'auction_house','stock_no','auction_number','state','color'
-];
+] as const;
 
-// Which columns to show in the table (key, label)
-const DISPLAY: [keyof any, string][] = [
+const DISPLAY: [string, string][] = [
   ['sold_date','Sold'],
   ['title','Title'],
   ['make','Make'],
@@ -32,6 +31,8 @@ const DISPLAY: [keyof any, string][] = [
   ['auction_number','Auction #'],
   ['state','State'],
 ];
+
+const SORTABLE = new Set(COLUMNS);
 
 function useDebounce<T>(val: T, ms = 400) {
   const [v, setV] = useState(val);
@@ -54,43 +55,97 @@ export default function SearchPage() {
   const [opts, setOpts] = useState<Record<string, string[]>>({
     make:[], model:[], wovr_status:[], sale_status:[], auction_house:[], state:[]
   });
+  const [optsLoading, setOptsLoading] = useState(false);
 
-  // default sort by id (newest first). You can switch to 'sold_date' later.
+  // Default: newest sales first (fallback to id if sold_date missing in schema)
   const [sort, setSort] = useState<{column: string; direction: 'asc'|'desc'}>({
-    column:'id', direction:'desc'
+    column: 'sold_date', direction: 'desc'
   });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(()=> Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // load dropdown options (skip missing cols safely)
+  // ---------- DISTINCT OPTIONS VIA RPC ----------
+  async function loadAllOptions(make?: string) {
+    setOptsLoading(true);
+
+    const [
+      { data: makeData, error: makeErr },
+      { data: wovrData, error: wovrErr },
+      { data: saleData, error: saleErr },
+      { data: houseData, error: houseErr },
+      { data: stateData, error: stateErr },
+      modelRes
+    ] = await Promise.all([
+      supabase.rpc('distinct_make'),
+      supabase.rpc('distinct_wovr_status'),
+      supabase.rpc('distinct_sale_status'),
+      supabase.rpc('distinct_auction_house'),
+      supabase.rpc('distinct_state'),
+      make
+        ? supabase.rpc('distinct_model', { make_filter: make })
+        : supabase.rpc('distinct_model')
+    ]);
+
+    if (makeErr || wovrErr || saleErr || houseErr || stateErr) {
+      console.warn('Distinct RPC error(s):', { makeErr, wovrErr, saleErr, houseErr, stateErr });
+    }
+
+    setOpts({
+      make: (makeData ?? []).map((r: any) => r.make),
+      wovr_status: (wovrData ?? []).map((r: any) => r.wovr_status),
+      sale_status: (saleData ?? []).map((r: any) => r.sale_status),
+      auction_house: (houseData ?? []).map((r: any) => r.auction_house),
+      state: (stateData ?? []).map((r: any) => r.state),
+      model: (modelRes.data ?? []).map((r: any) => r.model),
+    });
+
+    setOptsLoading(false);
+  }
+
+  useEffect(() => { loadAllOptions(); }, []);
+
+  // When Make changes, refresh Model options scoped to that Make
   useEffect(() => {
     (async () => {
-      const keys = ['make','model','wovr_status','sale_status','auction_house','state'];
-      const next: Record<string,string[]> = {};
-      for (const k of keys) {
-        try {
-          const { data, error } = await supabase
-            .from(TABLE).select(k).not(k,'is',null).neq(k,'')
-            .order(k,{ascending:true}).limit(1000);
-          if (error) throw error;
-          next[k] = Array.from(new Set((data||[]).map((r:any)=>r[k]).filter(Boolean)));
-        } catch { next[k] = []; }
+      if (!filters.make) { loadAllOptions(undefined); return; }
+      const { data, error } = await supabase.rpc('distinct_model', { make_filter: filters.make });
+      if (error) console.warn('distinct_model error:', error);
+      const models = (data ?? []).map((r:any) => r.model);
+      setOpts(o => ({ ...o, model: models }));
+      if (filters.model && !models.includes(filters.model)) {
+        setFilters(f => ({ ...f, model: '' }));
       }
-      setOpts(next);
     })();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.make]);
 
+  // ---------- FETCH DATA ----------
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
+
+  function update(k: string, v: string){ setPage(1); setFilters(s => ({ ...s, [k]: v })); }
+  const onInput  = (k:string) => (e: InputChange)  => update(k, e.target.value);
+  const onSelect = (k:string) => (e: SelectChange) => update(k, e.target.value);
 
   async function fetchData() {
     setLoading(true); setError('');
     try {
+      // guard ranges
+      let { yearFrom, yearTo, priceMin, priceMax } = debounced;
+      if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) [yearFrom, yearTo] = [yearTo, yearFrom];
+      if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) [priceMin, priceMax] = [priceMax, priceMin];
+
       let q = supabase.from(TABLE).select(COLUMNS.join(','), { count:'exact' });
 
-      const f = debounced;
-      if (f.vin.trim()) q = q.eq('vin', f.vin.trim());
+      const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax };
+
+      // VIN: exact only, case-insensitive (no wildcards)
+      if (f.vin.trim()) {
+        const vin = f.vin.trim();
+        q = q.ilike('vin', vin);
+      }
+
       if (f.make) q = q.eq('make', f.make);
       if (f.model) q = q.eq('model', f.model);
       if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
@@ -102,7 +157,9 @@ export default function SearchPage() {
       if (f.auction_house) q = q.eq('auction_house', f.auction_house);
       if (f.state) q = q.eq('state', f.state);
 
-      q = q.order(sort.column, { ascending: sort.direction === 'asc' });
+      const sortCol = SORTABLE.has(sort.column as any) ? sort.column : 'id';
+      q = q.order(sortCol, { ascending: sort.direction === 'asc' });
+
       const from = (page - 1) * pageSize, to = from + pageSize - 1;
       q = q.range(from, to);
 
@@ -114,11 +171,16 @@ export default function SearchPage() {
     } finally { setLoading(false); }
   }
 
-  function update(k: string, v: string){ setPage(1); setFilters(s => ({ ...s, [k]: v })); }
-  const onInput  = (k:string) => (e: InputChange)  => update(k, e.target.value);
-  const onSelect = (k:string) => (e: SelectChange) => update(k, e.target.value);
   function toggleSort(col:string){
     setSort(s => ({ column: col, direction: s.column===col && s.direction==='asc' ? 'desc' : 'asc' }));
+  }
+
+  function clearFilters() {
+    setFilters({
+      vin:'', make:'', model:'', yearFrom:'', yearTo:'',
+      wovr_status:'', sale_status:'', priceMin:'', priceMax:'', auction_house:'', state:''
+    });
+    setPage(1);
   }
 
   return (
@@ -128,25 +190,63 @@ export default function SearchPage() {
       {/* Filters */}
       <div className="rounded-lg border p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          <Field label="VIN (exact)"><input className="input" value={filters.vin} onChange={onInput('vin')} placeholder="MR0FZ22G401062065" /></Field>
-          <Field label="Make"><Select value={filters.make} onChange={onSelect('make')} options={opts.make} /></Field>
-          <Field label="Model"><Select value={filters.model} onChange={onSelect('model')} options={opts.model} /></Field>
-          <Field label="Year (From)"><input className="input" type="number" value={filters.yearFrom} onChange={onInput('yearFrom')} /></Field>
-          <Field label="Year (To)"><input className="input" type="number" value={filters.yearTo} onChange={onInput('yearTo')} /></Field>
-          <Field label="WOVR Status"><Select value={filters.wovr_status} onChange={onSelect('wovr_status')} options={opts.wovr_status} /></Field>
-          <Field label="Sale Status"><Select value={filters.sale_status} onChange={onSelect('sale_status')} options={opts.sale_status} /></Field>
-          <Field label="Price Min"><input className="input" type="number" value={filters.priceMin} onChange={onInput('priceMin')} /></Field>
-          <Field label="Price Max"><input className="input" type="number" value={filters.priceMax} onChange={onInput('priceMax')} /></Field>
-          <Field label="Auction House"><Select value={filters.auction_house} onChange={onSelect('auction_house')} options={opts.auction_house} /></Field>
-          <Field label="State"><Select value={filters.state} onChange={onSelect('state')} options={opts.state} /></Field>
-          <div className="flex items-end"><button className="btn" onClick={fetchData} disabled={loading}>{loading ? 'Loading…' : 'Search'}</button></div>
+          <Field label="VIN (exact)">
+            <input className="input" value={filters.vin} onChange={onInput('vin')} placeholder="e.g. MR0FZ22G401062065" />
+          </Field>
+
+          <Field label="Make">
+            <Select value={filters.make} onChange={onSelect('make')} options={opts.make} loading={optsLoading} />
+          </Field>
+
+          <Field label="Model">
+            <Select value={filters.model} onChange={onSelect('model')} options={opts.model} loading={optsLoading} />
+          </Field>
+
+          <Field label="Year (From)">
+            <input className="input" type="number" value={filters.yearFrom} onChange={onInput('yearFrom')} />
+          </Field>
+
+          <Field label="Year (To)">
+            <input className="input" type="number" value={filters.yearTo} onChange={onInput('yearTo')} />
+          </Field>
+
+          <Field label="WOVR Status">
+            <Select value={filters.wovr_status} onChange={onSelect('wovr_status')} options={opts.wovr_status} loading={optsLoading} />
+          </Field>
+
+          <Field label="Sale Status">
+            <Select value={filters.sale_status} onChange={onSelect('sale_status')} options={opts.sale_status} loading={optsLoading} />
+          </Field>
+
+          <Field label="Price Min">
+            <input className="input" type="number" value={filters.priceMin} onChange={onInput('priceMin')} />
+          </Field>
+
+          <Field label="Price Max">
+            <input className="input" type="number" value={filters.priceMax} onChange={onInput('priceMax')} />
+          </Field>
+
+          <Field label="Auction House">
+            <Select value={filters.auction_house} onChange={onSelect('auction_house')} options={opts.auction_house} loading={optsLoading} />
+          </Field>
+
+          <Field label="State">
+            <Select value={filters.state} onChange={onSelect('state')} options={opts.state} loading={optsLoading} />
+          </Field>
+
+          <div className="flex items-end gap-2">
+            <button className="btn" onClick={fetchData} disabled={loading}>{loading ? 'Loading…' : 'Search'}</button>
+            <button className="btn" onClick={clearFilters} disabled={loading}>Clear</button>
+          </div>
         </div>
       </div>
 
       {/* Results */}
       <div className="rounded-lg border">
         <div className="flex items-center justify-between p-4 border-b">
-          <div className="text-sm">Results <span className="ml-2 rounded-full bg-black/10 px-2 py-0.5">{total.toLocaleString()} items</span></div>
+          <div className="text-sm">
+            Results <span className="ml-2 rounded-full bg-black/10 px-2 py-0.5">{total.toLocaleString()} items</span>
+          </div>
           <div className="flex items-center gap-2">
             <select className="input w-28" value={String(pageSize)} onChange={(e: SelectChange)=>setPageSize(Number(e.target.value))}>
               {[10,25,50,100].map(n=> <option key={n} value={String(n)}>{n} / page</option>)}
@@ -164,7 +264,7 @@ export default function SearchPage() {
             <thead className="bg-black/5">
               <tr>
                 {DISPLAY.map(([id,label]) => (
-                  <th key={String(id)} onClick={()=>toggleSort(String(id))} className="px-3 py-2 text-left cursor-pointer">
+                  <th key={id} onClick={()=>toggleSort(id)} className="px-3 py-2 text-left cursor-pointer">
                     <div className="inline-flex items-center gap-2">
                       <span>{label}</span>
                       {sort.column===id && <span className="text-xs uppercase text-gray-500">{sort.direction}</span>}
@@ -178,11 +278,12 @@ export default function SearchPage() {
               {rows.map(r => (
                 <tr key={r.id} className="border-t hover:bg-black/5">
                   {DISPLAY.map(([id]) => (
-                    <td key={String(id)} className="px-3 py-2">
+                    <td key={id} className="px-3 py-2">
                       {id === 'sold_date' && r.sold_date ? new Date(r.sold_date).toLocaleString() :
                        id === 'sold_price' && r.sold_price != null ? `$${Number(r.sold_price).toLocaleString()}` :
-                       id === 'vin' || id === 'stock_no' || id === 'auction_number' ? <span className="font-mono text-xs break-all">{r[id as keyof typeof r]}</span> :
-                       r[id as keyof typeof r] ?? '—'}
+                       id === 'vin' || id === 'stock_no' || id === 'auction_number'
+                         ? <span className="font-mono text-xs break-all">{r[id]}</span>
+                         : (r[id] ?? '—')}
                     </td>
                   ))}
                 </tr>
@@ -210,15 +311,16 @@ function Field({label, children}:{label:string;children:any}) {
 }
 
 function Select({
-  value, onChange, options,
+  value, onChange, options, loading,
 }:{
   value: string;
   onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   options: string[];
+  loading?: boolean;
 }) {
   return (
-    <select className="input" value={value} onChange={onChange}>
-      <option value="">All</option>
+    <select className="input" value={value} onChange={onChange} disabled={loading}>
+      <option value="">{loading ? 'Loading…' : 'All'}</option>
       {options.map(o => <option key={o} value={o}>{o}</option>)}
     </select>
   );
