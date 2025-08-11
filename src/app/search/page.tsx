@@ -8,7 +8,18 @@ type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
 const TABLE = 'vehicles';
 
-// Your actual columns
+// 🔧 Adjust these if your schema names differ
+const BUYER_TABLE = 'buyer_number';          // e.g. 'buyer_numbers'
+const BUYER_NO_COL = 'buyer_number';         // the column that stores the buyer number string
+// Try mappings in this order: <value in buyer table> joins to <column in vehicles>
+const BUYER_LINKS: Array<{ from: string; to: string }> = [
+  { from: 'vin',           to: 'vin' },
+  { from: 'vehicle_id',    to: 'id' },
+  { from: 'auction_number',to: 'auction_number' },
+  { from: 'stock_no',      to: 'stock_no' },
+];
+
+// Your actual columns in vehicles
 const COLUMNS = [
   'id','title','make','model','sub_model','year','vin','odometer',
   'wovr_status','sale_status','sold_price','sold_date',
@@ -34,15 +45,44 @@ const DISPLAY: [string, string][] = [
 
 const SORTABLE = new Set(COLUMNS);
 
+// ---------- helpers ----------
 function useDebounce<T>(val: T, ms = 400) {
   const [v, setV] = useState(val);
   useEffect(() => { const id = setTimeout(()=>setV(val), ms); return ()=>clearTimeout(id); }, [val, ms]);
   return v;
 }
 
+function uniqDefined<T>(arr: (T | null | undefined)[]) {
+  return Array.from(new Set(arr.filter((x): x is T => x != null)));
+}
+
+// Look up buyer links → return vehicles filter like { col:'vin', values:[...] }
+async function findBuyerTargets(buyerNo: string): Promise<null | { col: string; values: (string|number)[] }> {
+  for (const map of BUYER_LINKS) {
+    const { from, to } = map;
+    try {
+      // exact case-insensitive match on buyer number (no wildcards)
+      const { data, error } = await supabase
+        .from(BUYER_TABLE)
+        .select(from)
+        .ilike(BUYER_NO_COL, buyerNo) // ilike with no % = exact, case-insensitive
+        .limit(1000);
+
+      if (error) continue;
+      const values = uniqDefined((data ?? []).map((r: any) => r[from]));
+      if (values.length > 0) {
+        return { col: to, values };
+      }
+    } catch {
+      // try next mapping
+    }
+  }
+  return null;
+}
+
 export default function SearchPage() {
   const [filters, setFilters] = useState({
-    vin:'', make:'', model:'', yearFrom:'', yearTo:'',
+    vin:'', buyer_no:'', make:'', model:'', yearFrom:'', yearTo:'',
     wovr_status:'', sale_status:'', priceMin:'', priceMax:'', auction_house:'', state:''
   });
   const debounced = useDebounce(filters, 400);
@@ -57,7 +97,7 @@ export default function SearchPage() {
   });
   const [optsLoading, setOptsLoading] = useState(false);
 
-  // Default: newest sales first (fallback to id if sold_date missing in schema)
+  // Default: newest sales first (fallback to id if sold_date missing)
   const [sort, setSort] = useState<{column: string; direction: 'asc'|'desc'}>({
     column: 'sold_date', direction: 'desc'
   });
@@ -70,11 +110,11 @@ export default function SearchPage() {
     setOptsLoading(true);
 
     const [
-      { data: makeData, error: makeErr },
-      { data: wovrData, error: wovrErr },
-      { data: saleData, error: saleErr },
-      { data: houseData, error: houseErr },
-      { data: stateData, error: stateErr },
+      { data: makeData },
+      { data: wovrData },
+      { data: saleData },
+      { data: houseData },
+      { data: stateData },
       modelRes
     ] = await Promise.all([
       supabase.rpc('distinct_make'),
@@ -82,14 +122,8 @@ export default function SearchPage() {
       supabase.rpc('distinct_sale_status'),
       supabase.rpc('distinct_auction_house'),
       supabase.rpc('distinct_state'),
-      make
-        ? supabase.rpc('distinct_model', { make_filter: make })
-        : supabase.rpc('distinct_model')
+      make ? supabase.rpc('distinct_model', { make_filter: make }) : supabase.rpc('distinct_model')
     ]);
-
-    if (makeErr || wovrErr || saleErr || houseErr || stateErr) {
-      console.warn('Distinct RPC error(s):', { makeErr, wovrErr, saleErr, houseErr, stateErr });
-    }
 
     setOpts({
       make: (makeData ?? []).map((r: any) => r.make),
@@ -109,8 +143,7 @@ export default function SearchPage() {
   useEffect(() => {
     (async () => {
       if (!filters.make) { loadAllOptions(undefined); return; }
-      const { data, error } = await supabase.rpc('distinct_model', { make_filter: filters.make });
-      if (error) console.warn('distinct_model error:', error);
+      const { data } = await supabase.rpc('distinct_model', { make_filter: filters.make });
       const models = (data ?? []).map((r:any) => r.model);
       setOpts(o => ({ ...o, model: models }));
       if (filters.model && !models.includes(filters.model)) {
@@ -140,10 +173,19 @@ export default function SearchPage() {
 
       const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax };
 
-      // VIN: exact only, case-insensitive (no wildcards)
+      // VIN: exact only, case-insensitive
       if (f.vin.trim()) {
         const vin = f.vin.trim();
         q = q.ilike('vin', vin);
+      }
+
+      // Buyer number: exact (case-insensitive) → lookup → filter vehicles by join column
+      if (f.buyer_no.trim()) {
+        const target = await findBuyerTargets(f.buyer_no.trim());
+        if (!target || target.values.length === 0) {
+          setRows([]); setTotal(0); setLoading(false); return; // nothing maps
+        }
+        q = q.in(target.col as any, target.values as any[]);
       }
 
       if (f.make) q = q.eq('make', f.make);
@@ -177,7 +219,7 @@ export default function SearchPage() {
 
   function clearFilters() {
     setFilters({
-      vin:'', make:'', model:'', yearFrom:'', yearTo:'',
+      vin:'', buyer_no:'', make:'', model:'', yearFrom:'', yearTo:'',
       wovr_status:'', sale_status:'', priceMin:'', priceMax:'', auction_house:'', state:''
     });
     setPage(1);
@@ -192,6 +234,10 @@ export default function SearchPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
           <Field label="VIN (exact)">
             <input className="input" value={filters.vin} onChange={onInput('vin')} placeholder="e.g. MR0FZ22G401062065" />
+          </Field>
+
+          <Field label="Buyer number (exact)">
+            <input className="input" value={filters.buyer_no} onChange={onInput('buyer_no')} placeholder="e.g. B12345" />
           </Field>
 
           <Field label="Make">
@@ -325,3 +371,4 @@ function Select({
     </select>
   );
 }
+
