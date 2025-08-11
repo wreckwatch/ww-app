@@ -8,22 +8,12 @@ type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
 const TABLE = 'vehicles';
 
-// 🔧 Adjust these if your schema names differ
-const BUYER_TABLE = 'buyer_number';          // e.g. 'buyer_numbers'
-const BUYER_NO_COL = 'buyer_number';         // the column that stores the buyer number string
-// Try mappings in this order: <value in buyer table> joins to <column in vehicles>
-const BUYER_LINKS: Array<{ from: string; to: string }> = [
-  { from: 'vin',           to: 'vin' },
-  { from: 'vehicle_id',    to: 'id' },
-  { from: 'auction_number',to: 'auction_number' },
-  { from: 'stock_no',      to: 'stock_no' },
-];
-
-// Your actual columns in vehicles
+// Actual columns (includes buyer_number now)
 const COLUMNS = [
   'id','title','make','model','sub_model','year','vin','odometer',
   'wovr_status','sale_status','sold_price','sold_date',
-  'auction_house','stock_no','auction_number','state','color'
+  'auction_house','stock_no','auction_number','state','color',
+  'buyer_number'
 ] as const;
 
 const DISPLAY: [string, string][] = [
@@ -40,44 +30,16 @@ const DISPLAY: [string, string][] = [
   ['auction_house','House'],
   ['stock_no','Stock #'],
   ['auction_number','Auction #'],
+  ['buyer_number','Buyer #'],   // ← new column
   ['state','State'],
 ];
 
 const SORTABLE = new Set(COLUMNS);
 
-// ---------- helpers ----------
 function useDebounce<T>(val: T, ms = 400) {
   const [v, setV] = useState(val);
   useEffect(() => { const id = setTimeout(()=>setV(val), ms); return ()=>clearTimeout(id); }, [val, ms]);
   return v;
-}
-
-function uniqDefined<T>(arr: (T | null | undefined)[]) {
-  return Array.from(new Set(arr.filter((x): x is T => x != null)));
-}
-
-// Look up buyer links → return vehicles filter like { col:'vin', values:[...] }
-async function findBuyerTargets(buyerNo: string): Promise<null | { col: string; values: (string|number)[] }> {
-  for (const map of BUYER_LINKS) {
-    const { from, to } = map;
-    try {
-      // exact case-insensitive match on buyer number (no wildcards)
-      const { data, error } = await supabase
-        .from(BUYER_TABLE)
-        .select(from)
-        .ilike(BUYER_NO_COL, buyerNo) // ilike with no % = exact, case-insensitive
-        .limit(1000);
-
-      if (error) continue;
-      const values = uniqDefined((data ?? []).map((r: any) => r[from]));
-      if (values.length > 0) {
-        return { col: to, values };
-      }
-    } catch {
-      // try next mapping
-    }
-  }
-  return null;
 }
 
 export default function SearchPage() {
@@ -97,7 +59,6 @@ export default function SearchPage() {
   });
   const [optsLoading, setOptsLoading] = useState(false);
 
-  // Default: newest sales first (fallback to id if sold_date missing)
   const [sort, setSort] = useState<{column: string; direction: 'asc'|'desc'}>({
     column: 'sold_date', direction: 'desc'
   });
@@ -105,10 +66,9 @@ export default function SearchPage() {
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(()=> Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // ---------- DISTINCT OPTIONS VIA RPC ----------
+  // ---- options via RPCs you created earlier ----
   async function loadAllOptions(make?: string) {
     setOptsLoading(true);
-
     const [
       { data: makeData },
       { data: wovrData },
@@ -124,7 +84,6 @@ export default function SearchPage() {
       supabase.rpc('distinct_state'),
       make ? supabase.rpc('distinct_model', { make_filter: make }) : supabase.rpc('distinct_model')
     ]);
-
     setOpts({
       make: (makeData ?? []).map((r: any) => r.make),
       wovr_status: (wovrData ?? []).map((r: any) => r.wovr_status),
@@ -133,13 +92,10 @@ export default function SearchPage() {
       state: (stateData ?? []).map((r: any) => r.state),
       model: (modelRes.data ?? []).map((r: any) => r.model),
     });
-
     setOptsLoading(false);
   }
-
   useEffect(() => { loadAllOptions(); }, []);
 
-  // When Make changes, refresh Model options scoped to that Make
   useEffect(() => {
     (async () => {
       if (!filters.make) { loadAllOptions(undefined); return; }
@@ -153,7 +109,6 @@ export default function SearchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.make]);
 
-  // ---------- FETCH DATA ----------
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
 
@@ -173,20 +128,11 @@ export default function SearchPage() {
 
       const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax };
 
-      // VIN: exact only, case-insensitive
-      if (f.vin.trim()) {
-        const vin = f.vin.trim();
-        q = q.ilike('vin', vin);
-      }
+      // VIN exact (case-insensitive)
+      if (f.vin.trim()) q = q.ilike('vin', f.vin.trim());
 
-      // Buyer number: exact (case-insensitive) → lookup → filter vehicles by join column
-      if (f.buyer_no.trim()) {
-        const target = await findBuyerTargets(f.buyer_no.trim());
-        if (!target || target.values.length === 0) {
-          setRows([]); setTotal(0); setLoading(false); return; // nothing maps
-        }
-        q = q.in(target.col as any, target.values as any[]);
-      }
+      // Buyer number exact (case-insensitive), matches vehicles.buyer_number
+      if (f.buyer_no.trim()) q = q.ilike('buyer_number', f.buyer_no.trim());
 
       if (f.make) q = q.eq('make', f.make);
       if (f.model) q = q.eq('model', f.model);
@@ -210,6 +156,7 @@ export default function SearchPage() {
       setRows(data || []); setTotal(count || 0);
     } catch (e:any) {
       setError(e.message || 'Failed to fetch');
+      setRows([]); setTotal(0);
     } finally { setLoading(false); }
   }
 
@@ -281,7 +228,7 @@ export default function SearchPage() {
           </Field>
 
           <div className="flex items-end gap-2">
-            <button className="btn" onClick={fetchData} disabled={loading}>{loading ? 'Loading…' : 'Search'}</button>
+            <button className="btn" onClick={() => { setPage(1); fetchData(); }} disabled={loading}>{loading ? 'Loading…' : 'Search'}</button>
             <button className="btn" onClick={clearFilters} disabled={loading}>Clear</button>
           </div>
         </div>
@@ -325,11 +272,11 @@ export default function SearchPage() {
                 <tr key={r.id} className="border-t hover:bg-black/5">
                   {DISPLAY.map(([id]) => (
                     <td key={id} className="px-3 py-2">
-                      {id === 'sold_date' && r.sold_date ? new Date(r.sold_date).toLocaleString() :
-                       id === 'sold_price' && r.sold_price != null ? `$${Number(r.sold_price).toLocaleString()}` :
-                       id === 'vin' || id === 'stock_no' || id === 'auction_number'
-                         ? <span className="font-mono text-xs break-all">{r[id]}</span>
-                         : (r[id] ?? '—')}
+                      {id === 'sold_date' && r.sold_date ? new Date(r.sold_date).toLocaleString()
+                        : id === 'sold_price' && r.sold_price != null ? `$${Number(r.sold_price).toLocaleString()}`
+                        : id === 'vin' || id === 'stock_no' || id === 'auction_number'
+                          ? <span className="font-mono text-xs break-all">{r[id]}</span>
+                          : (r[id] ?? '—')}
                     </td>
                   ))}
                 </tr>
