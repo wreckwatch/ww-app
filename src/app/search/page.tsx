@@ -65,7 +65,7 @@ const LABELS: Record<ColName, string> = {
 };
 
 /** Default visible order (your requested order, with Date between Amount and House) */
-const DEFAULT_VISIBLE: ColName[] = [
+const DEFAULT_VISIBLE_BASE = [
   'year',
   'make',
   'model',
@@ -76,11 +76,17 @@ const DEFAULT_VISIBLE: ColName[] = [
   'incident_type',
   'sale_status',
   'sold_price',
-  'sold_date',     // <- inserted here
+  'sold_date',     // Date column
   'auction_house',
   'buyer_number',
   'state',
-].filter((c) => COLUMNS.includes(c)) as ColName[];
+] as const;
+
+// Type-safe filter against the effective column set
+const DEFAULT_VISIBLE: ColName[] = DEFAULT_VISIBLE_BASE.filter(
+  (c): c is ColName => (COLUMNS as readonly ColName[]).includes(c as ColName)
+);
+
 
 /** Persisted layout key (bumped so this new order shows immediately) */
 const LAYOUT_STORAGE_KEY = 'ww_visible_columns_v3';
