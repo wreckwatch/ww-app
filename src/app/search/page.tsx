@@ -65,7 +65,7 @@ const LABELS: Record<ColName, string> = {
 };
 
 /** Default visible order (your requested order, with Date between Amount and House) */
-const DEFAULT_VISIBLE_BASE = [
+const DEFAULT_VISIBLE_BASE: readonly ColName[] = [
   'year',
   'make',
   'model',
@@ -80,12 +80,12 @@ const DEFAULT_VISIBLE_BASE = [
   'auction_house',
   'buyer_number',
   'state',
-] as const;
+];
 
-// Type-safe filter against the effective column set
-const DEFAULT_VISIBLE: ColName[] = DEFAULT_VISIBLE_BASE.filter(
-  (c): c is ColName => (COLUMNS as readonly ColName[]).includes(c as ColName)
+const DEFAULT_VISIBLE: ColName[] = DEFAULT_VISIBLE_BASE.filter((c) =>
+  (COLUMNS as readonly ColName[]).includes(c)
 );
+
 
 
 /** Persisted layout key (bumped so this new order shows immediately) */
