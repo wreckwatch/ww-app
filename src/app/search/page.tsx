@@ -39,7 +39,7 @@ function useDebounce<T>(val: T, ms = 400) {
   return v;
 }
 
-/** Theme toggle (keeps your light/dark switch) */
+/** Theme toggle */
 function ThemeToggleButton() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
@@ -70,7 +70,7 @@ function ThemeToggleButton() {
 export default function SearchPage() {
   const [filters, setFilters] = useState({
     vin:'', buyer_no:'', make:'', model:'', yearFrom:'', yearTo:'',
-    wovr_status:'', sale_status:'', priceMin:'', priceMax:'', auction_house:'', state:''
+    wovr_status:'', sale_status:'', incident_type:'', priceMin:'', priceMax:'', auction_house:'', state:''
   });
   const debounced = useDebounce(filters, 400);
 
@@ -80,7 +80,7 @@ export default function SearchPage() {
   const [error, setError] = useState('');
 
   const [opts, setOpts] = useState<Record<string, string[]>>({
-    make:[], model:[], wovr_status:[], sale_status:[], auction_house:[], state:[]
+    make:[], model:[], wovr_status:[], sale_status:[], incident_type:[], auction_house:[], state:[]
   });
   const [optsLoading, setOptsLoading] = useState(false);
 
@@ -92,7 +92,7 @@ export default function SearchPage() {
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(()=> Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // Load dropdown options using your RPCs
+  // Load dropdown options (with RPC fallback for Damage)
   async function loadAllOptions(make?: string) {
     setOptsLoading(true);
     const [
@@ -101,15 +101,31 @@ export default function SearchPage() {
       { data: saleData },
       { data: houseData },
       { data: stateData },
-      modelRes
+      modelRes,
+      damageRpc,
     ] = await Promise.all([
       supabase.rpc('distinct_make'),
       supabase.rpc('distinct_wovr_status'),
       supabase.rpc('distinct_sale_status'),
       supabase.rpc('distinct_auction_house'),
       supabase.rpc('distinct_state'),
-      make ? supabase.rpc('distinct_model', { make_filter: make }) : supabase.rpc('distinct_model')
+      make ? supabase.rpc('distinct_model', { make_filter: make }) : supabase.rpc('distinct_model'),
+      supabase.rpc('distinct_incident_type'), // may not exist yet
     ]);
+
+    // Fallback for Damage if RPC isn't there
+    let damageOpts: string[] = [];
+    if (damageRpc && !damageRpc.error && Array.isArray(damageRpc.data)) {
+      damageOpts = (damageRpc.data ?? []).map((r: any) => r.incident_type).filter(Boolean);
+    } else {
+      const { data: dmgData } = await supabase
+        .from(TABLE)
+        .select('incident_type')
+        .not('incident_type', 'is', null)
+        .order('incident_type', { ascending: true });
+      damageOpts = Array.from(new Set((dmgData ?? []).map((r: any) => r.incident_type).filter(Boolean)));
+    }
+
     setOpts({
       make: (makeData ?? []).map((r: any) => r.make),
       wovr_status: (wovrData ?? []).map((r: any) => r.wovr_status),
@@ -117,6 +133,7 @@ export default function SearchPage() {
       auction_house: (houseData ?? []).map((r: any) => r.auction_house),
       state: (stateData ?? []).map((r: any) => r.state),
       model: (modelRes.data ?? []).map((r: any) => r.model),
+      incident_type: damageOpts,
     });
     setOptsLoading(false);
   }
@@ -167,6 +184,7 @@ export default function SearchPage() {
       if (f.yearTo) q = q.lte('year', Number(f.yearTo));
       if (f.wovr_status) q = q.eq('wovr_status', f.wovr_status);
       if (f.sale_status) q = q.eq('sale_status', f.sale_status);
+      if (f.incident_type) q = q.eq('incident_type', f.incident_type);
       if (f.priceMin) q = q.gte('sold_price', Number(f.priceMin));
       if (f.priceMax) q = q.lte('sold_price', Number(f.priceMax));
       if (f.auction_house) q = q.eq('auction_house', f.auction_house);
@@ -195,7 +213,7 @@ export default function SearchPage() {
   function clearFilters() {
     setFilters({
       vin:'', buyer_no:'', make:'', model:'', yearFrom:'', yearTo:'',
-      wovr_status:'', sale_status:'', priceMin:'', priceMax:'', auction_house:'', state:''
+      wovr_status:'', sale_status:'', incident_type:'', priceMin:'', priceMax:'', auction_house:'', state:''
     });
     setPage(1);
   }
@@ -240,6 +258,10 @@ export default function SearchPage() {
 
           <Field label="Sale Status">
             <Select value={filters.sale_status} onChange={onSelect('sale_status')} options={opts.sale_status} loading={optsLoading} />
+          </Field>
+
+          <Field label="Damage">
+            <Select value={filters.incident_type} onChange={onSelect('incident_type')} options={opts.incident_type} loading={optsLoading} />
           </Field>
 
           <Field label="Price Min">
@@ -304,13 +326,13 @@ export default function SearchPage() {
               {rows.map(r => (
                 <tr key={r.id} className="border-t themable">
                   {DISPLAY.map(({id}) => (
-                    <td key={id} className="px-3 py-2">
+                    <td key={id} className="px-3 py-2" data-col={id}>
                       {id === 'sold_date' && r.sold_date
                         ? new Date(r.sold_date).toLocaleDateString() // date only
                         : id === 'sold_price' && r.sold_price != null
                           ? `$${Number(r.sold_price).toLocaleString()}`
                           : id === 'vin'
-                            ? <span className="font-mono text-xs break-all">{r[id]}</span>
+                            ? <span className="vin">{r[id]}</span>
                             : (r[id] ?? '—')}
                     </td>
                   ))}
@@ -354,6 +376,20 @@ export default function SearchPage() {
 
         thead.themable { background: var(--muted); }
         tr.themable:hover { background: var(--hover); }
+
+        /* Keep certain columns on a single line + give them room */
+        td[data-col="vin"] .vin {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          font-size: 12px;
+          white-space: nowrap;
+        }
+        td[data-col="vin"]     { white-space: nowrap; min-width: 140px; }
+        td[data-col="odometer"]{ white-space: nowrap; min-width: 90px; }
+        td[data-col="sold_price"]{ white-space: nowrap; min-width: 90px; }
+        td[data-col="sold_date"] { white-space: nowrap; min-width: 100px; }
+        td[data-col="buyer_number"],
+        td[data-col="state"],
+        td[data-col="auction_house"] { white-space: nowrap; }
       `}</style>
     </div>
   );
