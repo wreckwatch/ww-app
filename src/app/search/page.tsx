@@ -41,7 +41,7 @@ const COLUMNS = ALL_COLUMNS.filter(
   (c) => !(EXCLUDED as readonly string[]).includes(c)
 ) as ColName[];
 
-/** Labels (your requested names) */
+/** Labels (with your names) */
 const LABELS: Record<ColName, string> = {
   id: 'ID',
   title: 'Title',
@@ -55,7 +55,7 @@ const LABELS: Record<ColName, string> = {
   incident_type: 'Damage',
   sale_status: 'Outcome',
   sold_price: 'Amount',
-  sold_date: 'Sold',
+  sold_date: 'Date',        // <- show as "Date"
   auction_house: 'House',
   stock_no: 'Stock #',
   auction_number: 'Auction #',
@@ -64,7 +64,7 @@ const LABELS: Record<ColName, string> = {
   buyer_number: 'Buyer',
 };
 
-/** Default visible order (your requested order) */
+/** Default visible order (your requested order, with Date between Amount and House) */
 const DEFAULT_VISIBLE: ColName[] = [
   'year',
   'make',
@@ -76,13 +76,14 @@ const DEFAULT_VISIBLE: ColName[] = [
   'incident_type',
   'sale_status',
   'sold_price',
+  'sold_date',     // <- inserted here
   'auction_house',
   'buyer_number',
   'state',
 ].filter((c) => COLUMNS.includes(c)) as ColName[];
 
-/** Persisted layout key (bumped so your new defaults apply immediately) */
-const LAYOUT_STORAGE_KEY = 'ww_visible_columns_v2';
+/** Persisted layout key (bumped so this new order shows immediately) */
+const LAYOUT_STORAGE_KEY = 'ww_visible_columns_v3';
 
 const SORTABLE = new Set<ColName>(ALL_COLUMNS);
 
@@ -154,19 +155,10 @@ function ColumnPicker({
       return copy;
     });
   }
-  function selectAll() {
-    setLocal(all);
-  }
-  function selectDefault() {
-    setLocal(DEFAULT_VISIBLE);
-  }
-  function clearAll() {
-    setLocal([]);
-  }
-  function save() {
-    onChange(local);
-    onClose();
-  }
+  function selectAll() { setLocal(all); }
+  function selectDefault() { setLocal(DEFAULT_VISIBLE); }
+  function clearAll() { setLocal([]); }
+  function save() { onChange(local); onClose(); }
 
   const order = [...new Set<ColName>([...DEFAULT_VISIBLE, ...all.filter((c) => !DEFAULT_VISIBLE.includes(c))])];
 
@@ -174,20 +166,12 @@ function ColumnPicker({
     <div className="picker">
       <div className="picker-head">
         <div className="font-medium">Customize columns</div>
-        <button className="btn" onClick={onClose}>
-          Close
-        </button>
+        <button className="btn" onClick={onClose}>Close</button>
       </div>
       <div className="picker-actions">
-        <button className="btn" onClick={selectDefault}>
-          Default
-        </button>
-        <button className="btn" onClick={selectAll}>
-          All
-        </button>
-        <button className="btn" onClick={clearAll}>
-          None
-        </button>
+        <button className="btn" onClick={selectDefault}>Default</button>
+        <button className="btn" onClick={selectAll}>All</button>
+        <button className="btn" onClick={clearAll}>None</button>
       </div>
       <div className="picker-list">
         {order.map((id) => (
@@ -197,67 +181,33 @@ function ColumnPicker({
               <span>{LABELS[id]}</span>
             </label>
             <div className="ml-auto flex gap-1">
-              <button className="btn" onClick={() => move(id, -1)} title="Move up">
-                ↑
-              </button>
-              <button className="btn" onClick={() => move(id, 1)} title="Move down">
-                ↓
-              </button>
+              <button className="btn" onClick={() => move(id, -1)} title="Move up">↑</button>
+              <button className="btn" onClick={() => move(id, 1)} title="Move down">↓</button>
             </div>
           </div>
         ))}
       </div>
       <div className="picker-foot">
-        <button className="btn" onClick={save}>
-          Save
-        </button>
+        <button className="btn" onClick={save}>Save</button>
       </div>
 
       <style jsx>{`
         .picker {
-          position: absolute;
-          top: 52px;
-          right: 0;
-          width: 360px;
-          max-height: 70vh;
-          background: var(--card);
-          color: var(--fg);
-          border: 1px solid var(--border);
-          border-radius: 12px;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-          display: flex;
-          flex-direction: column;
+          position: absolute; top: 52px; right: 0;
+          width: 360px; max-height: 70vh;
+          background: var(--card); color: var(--fg);
+          border: 1px solid var(--border); border-radius: 12px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.15);
+          display: flex; flex-direction: column;
         }
-        .picker-head,
-        .picker-foot,
-        .picker-actions {
-          padding: 10px;
-          border-bottom: 1px solid var(--border);
-          display: flex;
-          align-items: center;
-          gap: 8px;
+        .picker-head, .picker-foot, .picker-actions {
+          padding: 10px; border-bottom: 1px solid var(--border);
+          display: flex; align-items: center; gap: 8px;
         }
-        .picker-foot {
-          border-top: 1px solid var(--border);
-          border-bottom: 0;
-          justify-content: flex-end;
-        }
-        .picker-list {
-          padding: 8px;
-          overflow: auto;
-          display: grid;
-          gap: 6px;
-        }
-        .item {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 6px 8px;
-          border-radius: 8px;
-        }
-        .item:hover {
-          background: var(--hover);
-        }
+        .picker-foot { border-top: 1px solid var(--border); border-bottom: 0; justify-content: flex-end; }
+        .picker-list { padding: 8px; overflow: auto; display: grid; gap: 6px; }
+        .item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; }
+        .item:hover { background: var(--hover); }
       `}</style>
     </div>
   );
@@ -313,12 +263,10 @@ export default function SearchPage() {
   function updateVisible(cols: ColName[]) {
     const uniqueCols = Array.from(new Set(cols)).filter((c): c is ColName => COLUMNS.includes(c));
     setVisibleCols(uniqueCols);
-    try {
-      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(uniqueCols));
-    } catch {}
+    try { localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(uniqueCols)); } catch {}
   }
 
-  // Default sort (kept on sold_date; column isn’t visible by default but you can change via header)
+  // Default sort remains on sold_date desc
   const [sort, setSort] = useState<{ column: ColName | string; direction: 'asc' | 'desc' }>({
     column: 'sold_date',
     direction: 'desc',
@@ -327,7 +275,7 @@ export default function SearchPage() {
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // Dropdown options (RPCs you already have)
+  // Dropdown options (RPCs)
   async function loadAllOptions(make?: string) {
     setOptsLoading(true);
     const [{ data: makeData }, { data: wovrData }, { data: saleData }, { data: houseData }, { data: stateData }, modelRes] =
@@ -349,16 +297,11 @@ export default function SearchPage() {
     });
     setOptsLoading(false);
   }
-  useEffect(() => {
-    loadAllOptions();
-  }, []);
+  useEffect(() => { loadAllOptions(); }, []);
 
   useEffect(() => {
     (async () => {
-      if (!filters.make) {
-        loadAllOptions(undefined);
-        return;
-      }
+      if (!filters.make) { loadAllOptions(undefined); return; }
       const { data } = await supabase.rpc('distinct_model', { make_filter: filters.make });
       const models = (data ?? []).map((r: any) => r.model);
       setOpts((o) => ({ ...o, model: models }));
@@ -370,9 +313,7 @@ export default function SearchPage() {
   }, [filters.make]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    fetchData();
-  }, [debounced, sort, page, pageSize]);
+  useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
 
   function update<K extends keyof typeof filters>(k: K, v: string) {
     setPage(1);
@@ -417,8 +358,7 @@ export default function SearchPage() {
           : 'id';
       q = q.order(sortCol, { ascending: sort.direction === 'asc' });
 
-      const from = (page - 1) * pageSize,
-        to = from + pageSize - 1;
+      const from = (page - 1) * pageSize, to = from + pageSize - 1;
       q = q.range(from, to);
 
       const { data, error, count } = await q;
@@ -462,9 +402,7 @@ export default function SearchPage() {
       <div className="mb-4 flex items-center justify-between relative">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold">WreckWatch Search</h1>
-          <button className="btn" onClick={() => setShowPicker((s) => !s)}>
-            Customize columns
-          </button>
+          <button className="btn" onClick={() => setShowPicker((s) => !s)}>Customize columns</button>
           {showPicker && (
             <ColumnPicker
               all={COLUMNS}
@@ -534,9 +472,7 @@ export default function SearchPage() {
             <button className="btn" onClick={() => { setPage(1); fetchData(); }} disabled={loading}>
               {loading ? 'Loading…' : 'Search'}
             </button>
-            <button className="btn" onClick={clearFilters} disabled={loading}>
-              Clear
-            </button>
+            <button className="btn" onClick={clearFilters} disabled={loading}>Clear</button>
           </div>
         </div>
       </div>
@@ -553,20 +489,12 @@ export default function SearchPage() {
           <div className="flex items-center gap-2">
             <select className="input w-28" value={String(pageSize)} onChange={(e: SelectChange) => setPageSize(Number(e.target.value))}>
               {[10, 25, 50, 100].map((n) => (
-                <option key={n} value={String(n)}>
-                  {n} / page
-                </option>
+                <option key={n} value={String(n)}>{n} / page</option>
               ))}
             </select>
-            <button className="btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-              Prev
-            </button>
-            <div className="text-sm tabular-nums">
-              {page} / {totalPages}
-            </div>
-            <button className="btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-              Next
-            </button>
+            <button className="btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>Prev</button>
+            <div className="text-sm tabular-nums">{page} / {totalPages}</div>
+            <button className="btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next</button>
           </div>
         </div>
 
@@ -588,18 +516,14 @@ export default function SearchPage() {
             </thead>
             <tbody>
               {rows.length === 0 && !loading && (
-                <tr>
-                  <td colSpan={visibleCols.length} className="p-8 text-center text-gray-400">
-                    No results.
-                  </td>
-                </tr>
+                <tr><td colSpan={visibleCols.length} className="p-8 text-center text-gray-400">No results.</td></tr>
               )}
               {rows.map((r) => (
                 <tr key={r.id} className="border-t themable">
                   {visibleCols.filter((c) => COLUMNS.includes(c)).map((id) => (
                     <td key={id} className="px-3 py-2">
                       {id === 'sold_date' && r.sold_date
-                        ? new Date(r.sold_date).toLocaleString()
+                        ? new Date(r.sold_date).toLocaleDateString()   // <- date only
                         : id === 'sold_price' && r.sold_price != null
                         ? `$${Number(r.sold_price).toLocaleString()}`
                         : id === 'vin'
@@ -619,53 +543,34 @@ export default function SearchPage() {
           --bg: #ffffff;
           --fg: #111111;
           --card: #ffffff;
-          --border: rgba(0, 0, 0, 0.12);
-          --muted: rgba(0, 0, 0, 0.05);
-          --hover: rgba(0, 0, 0, 0.05);
+          --border: rgba(0,0,0,.12);
+          --muted: rgba(0,0,0,.05);
+          --hover: rgba(0,0,0,.05);
         }
         .dark {
           --bg: #0c0d10;
           --fg: #f3f4f6;
           --card: #111317;
-          --border: rgba(255, 255, 255, 0.16);
-          --muted: rgba(255, 255, 255, 0.06);
-          --hover: rgba(255, 255, 255, 0.06);
+          --border: rgba(255,255,255,.16);
+          --muted: rgba(255,255,255,.06);
+          --hover: rgba(255,255,255,.06);
         }
-        html,
-        body {
-          background: var(--bg);
-          color: var(--fg);
-        }
+        html, body { background: var(--bg); color: var(--fg); }
 
         .input {
-          height: 38px;
-          border: 1px solid var(--border);
-          border-radius: 10px;
-          padding: 0 10px;
-          background: var(--card);
-          color: var(--fg);
+          height: 38px; border: 1px solid var(--border);
+          border-radius: 10px; padding: 0 10px;
+          background: var(--card); color: var(--fg);
         }
         .btn {
-          height: 36px;
-          padding: 0 12px;
-          border-radius: 10px;
-          border: 1px solid var(--border);
-          background: var(--card);
-          color: var(--fg);
+          height: 36px; padding: 0 12px; border-radius: 10px;
+          border: 1px solid var(--border); background: var(--card); color: var(--fg);
         }
-        .border {
-          border-color: var(--border) !important;
-        }
-        .border-t {
-          border-top-color: var(--border) !important;
-        }
+        .border { border-color: var(--border) !important; }
+        .border-t { border-top-color: var(--border) !important; }
 
-        thead.themable {
-          background: var(--muted);
-        }
-        tr.themable:hover {
-          background: var(--hover);
-        }
+        thead.themable { background: var(--muted); }
+        tr.themable:hover { background: var(--hover); }
       `}</style>
     </div>
   );
@@ -695,11 +600,8 @@ function Select({
     <select className="input" value={value} onChange={onChange} disabled={loading}>
       <option value="">{loading ? 'Loading…' : 'All'}</option>
       {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
-        </option>
+        <option key={o} value={o}>{o}</option>
       ))}
     </select>
   );
 }
-
