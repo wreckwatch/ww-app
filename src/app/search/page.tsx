@@ -524,25 +524,28 @@ export default function SearchPage() {
 
       {/* Design tokens & component styles */}
       <style jsx global>{`
+        /* IMPORTANT: use Tailwind's HSL tokens so body { @apply bg-background } picks this up */
         :root {
-          --accent: #32cd32;               /* lime brand */
-          --bg: #f7f8fb;                   /* softer app background */
+          --accent: #32cd32;                   /* lime brand */
+          --background: 220 20% 97%;           /* soft app canvas (#f5f7fb-ish) */
           --fg: #111111;
-          --card: #ffffff;
+          --card: #ffffff;                      /* cards stay white */
           --border: rgba(0, 0, 0, 0.12);
           --muted: rgba(0, 0, 0, 0.05);
           --hover: rgba(0, 0, 0, 0.06);
         }
         .dark {
           --accent: #34e684;
-          --bg: #0c0d10;
+          --background: 222 47% 7%;            /* deep slate for dark canvas */
           --fg: #f3f4f6;
           --card: #111317;
           --border: rgba(255, 255, 255, 0.16);
           --muted: rgba(255, 255, 255, 0.06);
           --hover: rgba(255, 255, 255, 0.08);
         }
-        html, body { background: var(--bg); color: var(--fg); }
+
+        /* Body picks up the new background via Tailwind's bg-background rule */
+        html, body { background: hsl(var(--background)); color: var(--fg); }
 
         /* Full width header with thin brand accent */
         .ww-header {
@@ -578,7 +581,9 @@ export default function SearchPage() {
           border: 1px solid var(--border);
           background: var(--card);
           color: var(--fg);
+          transition: background .15s ease, border-color .15s ease;
         }
+        .btn:hover { background: var(--hover); }
         .btn-ghost { background: transparent; }
         .btn-accent {
           background: var(--accent);
@@ -594,7 +599,7 @@ export default function SearchPage() {
         table { border-collapse: separate; border-spacing: 0; }
         thead.sticky-header th {
           position: sticky;
-          top: 0;                 /* sticks to the top of the table scroller */
+          top: 0;
           z-index: 2;
           background: var(--card);
           border-bottom: 1px solid var(--border);
