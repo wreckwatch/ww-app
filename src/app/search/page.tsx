@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { createBrowserClient } from '@/lib/supabaseClient';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 /** ---------- Types (adjust if your columns differ) ---------- */
 type VehicleRow = {
@@ -31,7 +31,15 @@ const formatDate = (iso: string | null) =>
 
 /** ---------- The Page ---------- */
 export default function SearchPage() {
-  const supabase = useMemo(createBrowserClient, []);
+  // Create a browser Supabase client once
+  const supabase = useMemo<SupabaseClient>(
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL as string,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string
+      ),
+    []
+  );
 
   /** Filters */
   const [vin, setVin] = useState('');
@@ -109,8 +117,7 @@ export default function SearchPage() {
 
     loadOptions();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [supabase]);
 
   /** ----------- Query data ----------- */
   const fetchData = async (resetPage = false) => {
@@ -119,7 +126,7 @@ export default function SearchPage() {
       setError(null);
       if (resetPage) setPage(1);
 
-      const from = (resetPage ? 0 : (page - 1) * pageSize);
+      const from = resetPage ? 0 : (page - 1) * pageSize;
       const to = from + pageSize - 1;
 
       let q = supabase
@@ -138,7 +145,7 @@ export default function SearchPage() {
 
       // Apply filters
       if (vin.trim()) {
-        // case-insensitive exact match (ilike without % wildcards)
+        // case-insensitive exact match
         q = q.filter('vin', 'ilike', vin.trim());
       }
       if (buyer.trim()) q = q.eq('buyer_number', buyer.trim());
@@ -165,7 +172,7 @@ export default function SearchPage() {
     }
   };
 
-  // Initial search once options load
+  // Initial search once some options load
   useEffect(() => {
     if (optMake.length || optModel.length) fetchData(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -212,7 +219,7 @@ export default function SearchPage() {
               Search Australian auction results by VIN, buyer number, make, model and more.
             </p>
           </div>
-          <div className="flex items-center gap-2">{/* space for future quick actions */}</div>
+          <div className="flex items-center gap-2">{/* future actions */}</div>
         </div>
       </header>
 
