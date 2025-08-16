@@ -547,20 +547,35 @@ export default function SearchPage() {
         /* Body picks up the new background via Tailwind's bg-background rule */
         html, body { background: hsl(var(--background)); color: var(--fg); }
 
-        /* Full width header with thin brand accent */
-        .ww-header {
-          width: 100%;
-          background: var(--card);
-          border-bottom: 4px solid var(--accent);
-        }
-        .ww-header__inner {
-          max-width: min(100vw - 24px, 1600px);
-          margin: 0 auto;
-          padding: 10px 16px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
+/* Full width header with thin brand accent (full-bleed + sticky) */
+.ww-header {
+  background: var(--card);
+  border-bottom: 4px solid var(--accent);
+
+  /* make it span the full viewport even if parent is centered/padded */
+  width: 100vw;
+  margin-left: 50%;
+  transform: translateX(-50%);
+
+  /* optional: keep it visible on scroll */
+  position: sticky;
+  top: 0;
+  z-index: 50;
+
+  /* iOS safe-area support */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+.ww-header__inner {
+  max-width: min(100vw - 24px, 1600px);
+  margin: 0 auto;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
         .ww-logo {
           font-weight: 700;
           letter-spacing: 0.2px;
