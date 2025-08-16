@@ -1,558 +1,670 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabaseClient';
 
-/** ---------- Types (adjust if your columns differ) ---------- */
-type VehicleRow = {
-  id: string | number;
-  year: number | null;
-  make: string | null;
-  model: string | null;
-  sub_model: string | null;       // Variant
-  vin: string | null;
-  odometer: string | number | null;
-  wovr_status: string | null;
-  incident_type: string | null;   // Damage
-  sale_status: string | null;     // Outcome
-  sold_price: number | null;      // Amount
-  sold_date: string | null;       // Date (ISO)
-  auction_house: string | null;   // House
-  buyer_number: string | null;    // Buyer
-  state: string | null;
-};
+type InputChange = React.ChangeEvent<HTMLInputElement>;
+type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
-/** Small helpers */
-const formatMoney = (n: number | null | undefined) =>
-  typeof n === 'number' ? `$${n.toLocaleString()}` : '—';
+const TABLE = 'vehicles';
 
-const formatDate = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleDateString() : '—';
+/** Locked result columns (order + labels) */
+const DISPLAY = [
+  { id: 'year',          label: 'Year' },
+  { id: 'make',          label: 'Make' },
+  { id: 'model',         label: 'Model' },
+  { id: 'sub_model',     label: 'Variant' },
+  { id: 'vin',           label: 'VIN' },
+  { id: 'odometer',      label: 'ODO' },
+  { id: 'wovr_status',   label: 'WOVR' },
+  { id: 'incident_type', label: 'Damage' },
+  { id: 'sale_status',   label: 'Outcome' },
+  { id: 'sold_price',    label: 'Amount' },
+  { id: 'sold_date',     label: 'Date' }, // date-only
+  { id: 'auction_house', label: 'House' },
+  { id: 'buyer_number',  label: 'Buyer' },
+  { id: 'state',         label: 'State' },
+] as const;
+
+// Minimal list of columns fetched from DB (include id for stable keys)
+const QUERY_COLUMNS = ['id', ...DISPLAY.map(d => d.id)];
+
+// Columns allowed for sorting (fallback to id if not sortable)
+const SORTABLE = new Set<string>([...DISPLAY.map(d => d.id), 'id']);
+
+/** debounce hook */
+function useDebounce<T>(val: T, ms = 400) {
+  const [v, setV] = useState(val);
+  useEffect(() => {
+    const id = setTimeout(() => setV(val), ms);
+    return () => clearTimeout(id);
+  }, [val, ms]);
+  return v;
+}
+
+/** Theme toggle */
+function ThemeToggleButton() {
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('theme') as 'light' | 'dark' | null;
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const initial = stored ?? (prefersDark ? 'dark' : 'light');
+      setTheme(initial);
+      document.documentElement.classList.toggle('dark', initial === 'dark');
+    } catch {}
+  }, []);
+
+  function toggle() {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    document.documentElement.classList.toggle('dark', next === 'dark');
+    try {
+      localStorage.setItem('theme', next);
+    } catch {}
+  }
+
+  return (
+    <button className="btn ghost" onClick={toggle} aria-label="Toggle theme">
+      {theme === 'dark' ? '🌙 Dark' : '☀️ Light'}
+    </button>
+  );
+}
 
 export default function SearchPage() {
-  /** Create a browser Supabase client once */
-  const supabase = useMemo<SupabaseClient>(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string
-      ),
-    []
-  );
+  const [filters, setFilters] = useState({
+    vin: '',
+    buyer_no: '',
+    make: '',
+    model: '',
+    yearFrom: '',
+    yearTo: '',
+    wovr_status: '',
+    sale_status: '',
+    incident_type: '',
+    priceMin: '',
+    priceMax: '',
+    auction_house: '',
+    state: '',
+  });
+  const debounced = useDebounce(filters, 400);
 
-  /** Filters */
-  const [vin, setVin] = useState('');
-  const [buyer, setBuyer] = useState('');
-  const [make, setMake] = useState('All');
-  const [model, setModel] = useState('All');
-  const [yearFrom, setYearFrom] = useState<string>('');
-  const [yearTo, setYearTo] = useState<string>('');
-  const [wovr, setWovr] = useState('All');
-  const [saleStatus, setSaleStatus] = useState('All');
-  const [damage, setDamage] = useState('All');
-  const [priceMin, setPriceMin] = useState<string>('');
-  const [auctionHouse, setAuctionHouse] = useState('All');
-  const [state, setState] = useState('All');
-
-  /** Options for dropdowns */
-  const [optMake, setOptMake] = useState<string[]>([]);
-  const [optModel, setOptModel] = useState<string[]>([]);
-  const [optWovr, setOptWovr] = useState<string[]>([]);
-  const [optSale, setOptSale] = useState<string[]>([]);
-  const [optDamage, setOptDamage] = useState<string[]>([]);
-  const [optAuction, setOptAuction] = useState<string[]>([]);
-  const [optState, setOptState] = useState<string[]>([]);
-
-  /** Results & pagination */
-  const [rows, setRows] = useState<VehicleRow[]>([]);
+  const [rows, setRows] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const [opts, setOpts] = useState<Record<string, string[]>>({
+    make: [],
+    model: [],
+    wovr_status: [],
+    sale_status: [],
+    incident_type: [],
+    auction_house: [],
+    state: [],
+  });
+  const [optsLoading, setOptsLoading] = useState(false);
+
+  // Sorting/paging
+  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>({
+    column: 'sold_date',
+    direction: 'desc',
+  });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  /** ----------- Load unique options ----------- */
-  useEffect(() => {
-    let cancelled = false;
-
-    async function uniq(column: keyof VehicleRow): Promise<string[]> {
-      const { data, error } = await supabase
-        .from('vehicles')
-        .select(String(column))
-        .not(String(column), 'is', null)
-        .neq(String(column), '')
-        .order(String(column), { ascending: true });
-
-      if (error) throw error;
-      const s = new Set<string>();
-      (data as any[]).forEach((r) => r[column] && s.add(String(r[column])));
-      return Array.from(s);
-    }
-
-    async function loadOptions() {
-      try {
-        const [mks, mdls, wv, ss, dmg, auc, st] = await Promise.all([
-          uniq('make'),
-          uniq('model'),
-          uniq('wovr_status'),
-          uniq('sale_status'),
-          uniq('incident_type'),
-          uniq('auction_house'),
-          uniq('state'),
-        ]);
-        if (cancelled) return;
-        setOptMake(mks);
-        setOptModel(mdls);
-        setOptWovr(wv);
-        setOptSale(ss);
-        setOptDamage(dmg);
-        setOptAuction(auc);
-        setOptState(st);
-      } catch (e: any) {
-        if (!cancelled) setError(e.message ?? 'Failed loading options.');
-      }
-    }
-
-    loadOptions();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase]);
-
-  /** ----------- Query data ----------- */
-  const fetchData = async (resetPage = false) => {
+  // Load dropdown options – uses your RPCs (including distinct_incident_type)
+  async function loadAllOptions(makeFilter?: string) {
+    setOptsLoading(true);
     try {
-      setLoading(true);
-      setError(null);
-      if (resetPage) setPage(1);
+      const [
+        makeRes,
+        wovrRes,
+        saleRes,
+        houseRes,
+        stateRes,
+        modelRes,
+        damageRes,
+      ] = await Promise.all([
+        supabase.rpc('distinct_make'),
+        supabase.rpc('distinct_wovr_status'),
+        supabase.rpc('distinct_sale_status'),
+        supabase.rpc('distinct_auction_house'),
+        supabase.rpc('distinct_state'),
+        makeFilter
+          ? supabase.rpc('distinct_model', { make_filter: makeFilter })
+          : supabase.rpc('distinct_model'),
+        supabase.rpc('distinct_incident_type'),
+      ]);
 
-      const from = resetPage ? 0 : (page - 1) * pageSize;
-      const to = from + pageSize - 1;
+      setOpts({
+        make: (makeRes.data ?? []).map((r: any) => r.make),
+        wovr_status: (wovrRes.data ?? []).map((r: any) => r.wovr_status),
+        sale_status: (saleRes.data ?? []).map((r: any) => r.sale_status),
+        auction_house: (houseRes.data ?? []).map((r: any) => r.auction_house),
+        state: (stateRes.data ?? []).map((r: any) => r.state),
+        model: (modelRes.data ?? []).map((r: any) => r.model),
+        incident_type: (damageRes.data ?? []).map((r: any) => r.incident_type),
+      });
+    } finally {
+      setOptsLoading(false);
+    }
+  }
 
-      const columns =
-        'id,year,make,model,sub_model,vin,odometer,wovr_status,incident_type,sale_status,sold_price,sold_date,auction_house,buyer_number,state' as const;
+  useEffect(() => {
+    loadAllOptions();
+  }, []);
 
-      let q = supabase
-        .from('vehicles')
-        .select(columns, { count: 'exact' })
-        .order('sold_date', { ascending: false })
-        .range(from, to);
-
-      // Apply filters
-      if (vin.trim()) {
-        // Case-insensitive exact match (no wildcards)
-        q = q.filter('vin', 'ilike', vin.trim());
+  // When make changes, update models list (and reset model if it becomes invalid)
+  useEffect(() => {
+    (async () => {
+      if (!filters.make) {
+        loadAllOptions(undefined);
+        return;
       }
-      if (buyer.trim()) q = q.eq('buyer_number', buyer.trim());
-      if (make !== 'All') q = q.eq('make', make);
-      if (model !== 'All') q = q.eq('model', model);
-      if (wovr !== 'All') q = q.eq('wovr_status', wovr);
-      if (saleStatus !== 'All') q = q.eq('sale_status', saleStatus);
-      if (damage !== 'All') q = q.eq('incident_type', damage);
-      if (auctionHouse !== 'All') q = q.eq('auction_house', auctionHouse);
-      if (state !== 'All') q = q.eq('state', state);
-      if (yearFrom) q = q.gte('year', Number(yearFrom));
-      if (yearTo) q = q.lte('year', Number(yearTo));
-      if (priceMin) q = q.gte('sold_price', Number(priceMin));
+      const { data } = await supabase.rpc('distinct_model', { make_filter: filters.make });
+      const models = (data ?? []).map((r: any) => r.model);
+      setOpts((o) => ({ ...o, model: models }));
+      if (filters.model && !models.includes(filters.model)) {
+        setFilters((f) => ({ ...f, model: '' }));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.make]);
+
+  // Fetch on changes (debounced)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
+
+  function update(k: keyof typeof filters, v: string) {
+    setPage(1);
+    setFilters((s) => ({ ...s, [k]: v }));
+  }
+  const onInput = (k: keyof typeof filters) => (e: InputChange) => update(k, e.target.value);
+  const onSelect = (k: keyof typeof filters) => (e: SelectChange) => update(k, e.target.value);
+
+  async function fetchData() {
+    setLoading(true);
+    setError('');
+    try {
+      // Normalise ranges
+      let { yearFrom, yearTo, priceMin, priceMax } = debounced;
+      if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) {
+        [yearFrom, yearTo] = [yearTo, yearFrom];
+      }
+      if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) {
+        [priceMin, priceMax] = [priceMax, priceMin];
+      }
+
+      let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), { count: 'exact' });
+      const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax };
+
+      // VIN exact (case-insensitive)
+      if (f.vin.trim()) q = q.ilike('vin', f.vin.trim());
+      // Buyer number exact (case-insensitive)
+      if (f.buyer_no.trim()) q = q.ilike('buyer_number', f.buyer_no.trim());
+
+      if (f.make) q = q.eq('make', f.make);
+      if (f.model) q = q.eq('model', f.model);
+      if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
+      if (f.yearTo) q = q.lte('year', Number(f.yearTo));
+      if (f.wovr_status) q = q.eq('wovr_status', f.wovr_status);
+      if (f.sale_status) q = q.eq('sale_status', f.sale_status);
+      if (f.incident_type) q = q.eq('incident_type', f.incident_type);
+      if (f.priceMin) q = q.gte('sold_price', Number(f.priceMin));
+      if (f.priceMax) q = q.lte('sold_price', Number(f.priceMax));
+      if (f.auction_house) q = q.eq('auction_house', f.auction_house);
+      if (f.state) q = q.eq('state', f.state);
+
+      const sortCol = SORTABLE.has(sort.column) ? sort.column : 'id';
+      q = q.order(sortCol, { ascending: sort.direction === 'asc' });
+
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      q = q.range(from, to);
 
       const { data, error, count } = await q;
       if (error) throw error;
-
-      // **** Key fix for your TS compile error ****
-      setRows(((data ?? []) as unknown) as VehicleRow[]);
+      setRows(data || []);
       setTotal(count || 0);
     } catch (e: any) {
-      setError(e.message ?? 'Search failed.');
+      setError(e.message || 'Failed to fetch');
+      setRows([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  // Initial search after options are in (or immediately if not needed)
-  useEffect(() => {
-    fetchData(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  function toggleSort(col: string) {
+    if (!SORTABLE.has(col)) return;
+    setSort((s) => ({
+      column: col,
+      direction: s.column === col && s.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  }
 
-  // Re-run when page/pageSize changes
-  useEffect(() => {
-    fetchData(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize]);
-
-  /** UI handlers */
-  const onSearch = () => fetchData(true);
-  const onClear = () => {
-    setVin('');
-    setBuyer('');
-    setMake('All');
-    setModel('All');
-    setYearFrom('');
-    setYearTo('');
-    setWovr('All');
-    setSaleStatus('All');
-    setDamage('All');
-    setPriceMin('');
-    setAuctionHouse('All');
-    setState('All');
+  function clearFilters() {
+    setFilters({
+      vin: '',
+      buyer_no: '',
+      make: '',
+      model: '',
+      yearFrom: '',
+      yearTo: '',
+      wovr_status: '',
+      sale_status: '',
+      incident_type: '',
+      priceMin: '',
+      priceMax: '',
+      auction_house: '',
+      state: '',
+    });
     setPage(1);
-    fetchData(true);
-  };
-  const nextPage = () =>
-    setPage((p) => (p < Math.max(1, Math.ceil(total / pageSize)) ? p + 1 : p));
-  const prevPage = () => setPage((p) => (p > 1 ? p - 1 : p));
+  }
 
-  /** --------------- RENDER --------------- */
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-      {/* PAGE HEADER */}
-      <header className="pt-6 pb-4">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">WreckWatch Search</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Search Australian auction results by VIN, buyer number, make, model and more.
-            </p>
+    <>
+      {/* Brand bar */}
+      <header className="brand-bar">
+        <div className="wrap">
+          <div className="logo">WreckWatch</div>
+          <nav className="nav">
+            <a className="nav-link active">Search</a>
+          </nav>
+          <div className="right">
+            <ThemeToggleButton />
           </div>
         </div>
       </header>
 
-      {/* FILTERS CARD */}
-      <section className="rounded-xl border border-border bg-card/60 shadow-sm backdrop-blur-sm supports-[backdrop-filter]:bg-card/70">
-        <div className="p-4 sm:p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-muted-foreground">Filters</h2>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {/* VIN */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">VIN (exact)</label>
+      <main className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
+        {/* Filters */}
+        <div className="card mb-6">
+          <div className="card-title">Filters</div>
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <Field label="VIN (exact)">
               <input
-                value={vin}
-                onChange={(e) => setVin(e.target.value)}
+                className="input"
+                value={filters.vin}
+                onChange={onInput('vin')}
                 placeholder="e.g. MR0FZ22G401062065"
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
               />
-            </div>
+            </Field>
 
-            {/* Buyer number */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Buyer number (exact)</label>
+            <Field label="Buyer number (exact)">
               <input
-                value={buyer}
-                onChange={(e) => setBuyer(e.target.value)}
+                className="input"
+                value={filters.buyer_no}
+                onChange={onInput('buyer_no')}
                 placeholder="e.g. B12345"
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
               />
-            </div>
+            </Field>
 
-            {/* Make */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Make</label>
-              <select
-                value={make}
-                onChange={(e) => setMake(e.target.value)}
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
-              >
-                <option>All</option>
-                {optMake.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Model */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Model</label>
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
-              >
-                <option>All</option>
-                {optModel.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Year From */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Year (From)</label>
-              <input
-                type="number"
-                value={yearFrom}
-                onChange={(e) => setYearFrom(e.target.value)}
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
+            <Field label="Make">
+              <Select
+                value={filters.make}
+                onChange={onSelect('make')}
+                options={opts.make}
+                loading={optsLoading}
               />
-            </div>
+            </Field>
 
-            {/* Year To */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Year (To)</label>
-              <input
-                type="number"
-                value={yearTo}
-                onChange={(e) => setYearTo(e.target.value)}
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
+            <Field label="Model">
+              <Select
+                value={filters.model}
+                onChange={onSelect('model')}
+                options={opts.model}
+                loading={optsLoading}
               />
-            </div>
+            </Field>
 
-            {/* WOVR */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">WOVR Status</label>
-              <select
-                value={wovr}
-                onChange={(e) => setWovr(e.target.value)}
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
-              >
-                <option>All</option>
-                {optWovr.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Field label="Year (From)">
+              <input className="input" type="number" value={filters.yearFrom} onChange={onInput('yearFrom')} />
+            </Field>
 
-            {/* Sale Status */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Sale Status</label>
-              <select
-                value={saleStatus}
-                onChange={(e) => setSaleStatus(e.target.value)}
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
-              >
-                <option>All</option>
-                {optSale.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Field label="Year (To)">
+              <input className="input" type="number" value={filters.yearTo} onChange={onInput('yearTo')} />
+            </Field>
 
-            {/* Damage */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Damage</label>
-              <select
-                value={damage}
-                onChange={(e) => setDamage(e.target.value)}
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
-              >
-                <option>All</option>
-                {optDamage.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Price Min */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Price Min</label>
-              <input
-                type="number"
-                value={priceMin}
-                onChange={(e) => setPriceMin(e.target.value)}
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
+            <Field label="WOVR Status">
+              <Select
+                value={filters.wovr_status}
+                onChange={onSelect('wovr_status')}
+                options={opts.wovr_status}
+                loading={optsLoading}
               />
-            </div>
+            </Field>
 
-            {/* Auction House */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Auction House</label>
-              <select
-                value={auctionHouse}
-                onChange={(e) => setAuctionHouse(e.target.value)}
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
-              >
-                <option>All</option>
-                {optAuction.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Field label="Sale Status">
+              <Select
+                value={filters.sale_status}
+                onChange={onSelect('sale_status')}
+                options={opts.sale_status}
+                loading={optsLoading}
+              />
+            </Field>
 
-            {/* State */}
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">State</label>
-              <select
-                value={state}
-                onChange={(e) => setState(e.target.value)}
-                className="w-full rounded-md border border-border bg-card px-2 py-2 text-sm"
+            <Field label="Damage">
+              <Select
+                value={filters.incident_type}
+                onChange={onSelect('incident_type')}
+                options={opts.incident_type}
+                loading={optsLoading}
+              />
+            </Field>
+
+            <Field label="Price Min">
+              <input className="input" type="number" value={filters.priceMin} onChange={onInput('priceMin')} />
+            </Field>
+
+            <Field label="Price Max">
+              <input className="input" type="number" value={filters.priceMax} onChange={onInput('priceMax')} />
+            </Field>
+
+            <Field label="Auction House">
+              <Select
+                value={filters.auction_house}
+                onChange={onSelect('auction_house')}
+                options={opts.auction_house}
+                loading={optsLoading}
+              />
+            </Field>
+
+            <Field label="State">
+              <Select
+                value={filters.state}
+                onChange={onSelect('state')}
+                options={opts.state}
+                loading={optsLoading}
+              />
+            </Field>
+
+            <div className="flex items-end gap-2">
+              <button
+                className="btn primary"
+                onClick={() => {
+                  setPage(1);
+                  fetchData();
+                }}
+                disabled={loading}
               >
-                <option>All</option>
-                {optState.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
+                {loading ? 'Loading…' : 'Search'}
+              </button>
+              <button className="btn ghost" onClick={clearFilters} disabled={loading}>
+                Clear
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Sticky action row */}
-        <div className="sticky bottom-0 z-[1] border-t border-border bg-card/80 px-4 py-3 sm:px-5">
-          <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClear}
-              className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted"
-            >
-              Clear
-            </button>
-            <button
-              type="button"
-              onClick={onSearch}
-              className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500"
-            >
-              Search
-            </button>
+        {/* Results */}
+        <div className="card">
+          <div className="card-header">
+            <div className="text-sm">
+              Results{' '}
+              <span className="count-chip">
+                {total.toLocaleString()} items
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                className="input w-28"
+                value={String(pageSize)}
+                onChange={(e: SelectChange) => setPageSize(Number(e.target.value))}
+              >
+                {[10, 25, 50, 100].map((n) => (
+                  <option key={n} value={String(n)}>
+                    {n} / page
+                  </option>
+                ))}
+              </select>
+              <button className="btn ghost" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                Prev
+              </button>
+              <div className="text-sm tabular-nums">
+                {page} / {totalPages}
+              </div>
+              <button className="btn ghost" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+                Next
+              </button>
+            </div>
           </div>
-        </div>
-      </section>
 
-      {/* RESULTS TOOLBAR */}
-      <section className="mt-6 mb-2 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Results</span>
-          <span className="inline-flex items-center rounded-full border border-border bg-card px-2 py-0.5 text-xs">
-            {total.toLocaleString()} items
-          </span>
-        </div>
+          {error && <div className="p-4 text-red-500 text-sm">{error}</div>}
 
-        <div className="flex items-center gap-2">
-          <label className="sr-only" htmlFor="pageSize">
-            page size
-          </label>
-          <select
-            id="pageSize"
-            value={pageSize}
-            onChange={(e) => setPageSize(Number(e.target.value))}
-            className="rounded-md border border-border bg-card px-2 py-1 text-sm"
-          >
-            {[25, 50, 100].map((n) => (
-              <option key={n} value={n}>
-                {n} / page
-              </option>
-            ))}
-          </select>
-
-          <button
-            onClick={prevPage}
-            disabled={page === 1 || loading}
-            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Prev
-          </button>
-
-          <span className="text-xs text-muted-foreground">
-            {page} / {Math.max(1, Math.ceil(total / pageSize))}
-          </span>
-
-          <button
-            onClick={nextPage}
-            disabled={page >= Math.ceil(total / pageSize) || loading}
-            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Next
-          </button>
-        </div>
-      </section>
-
-      {/* Loading / Error */}
-      {loading && (
-        <div className="mt-2 rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">
-          Searching…
-        </div>
-      )}
-      {error && (
-        <div className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-          {error}
-        </div>
-      )}
-
-      {/* TABLE */}
-      <div className="mt-2 overflow-x-auto rounded-xl border border-border bg-card">
-        <table className="w-full table-fixed text-sm">
-          <thead className="sticky top-0 z-10 bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-muted/60">
-            <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
-              <th className="w-[72px] px-3 py-2">Year</th>
-              <th className="w-[120px] px-3 py-2">Make</th>
-              <th className="w-[140px] px-3 py-2">Model</th>
-              <th className="w-[280px] px-3 py-2">Variant</th>
-              <th className="w-[190px] px-3 py-2">VIN</th>
-              <th className="w-[120px] px-3 py-2 text-right">ODO</th>
-              <th className="w-[120px] px-3 py-2">WOVR</th>
-              <th className="w-[110px] px-3 py-2">Damage</th>
-              <th className="w-[120px] px-3 py-2">Outcome</th>
-              <th className="w-[110px] px-3 py-2 text-right">Amount</th>
-              <th className="w-[120px] px-3 py-2">Date</th>
-              <th className="w-[120px] px-3 py-2">House</th>
-              <th className="w-[100px] px-3 py-2">Buyer</th>
-              <th className="w-[80px] px-3 py-2">State</th>
-            </tr>
-          </thead>
-
-          <tbody className="divide-y divide-border">
-            {rows.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={14}
-                  className="px-3 py-10 text-center text-sm text-muted-foreground"
-                >
-                  No results. Adjust your filters and try again.
-                </td>
-              </tr>
-            ) : (
-              rows.map((r) => (
-                <tr key={r.id} className="hover:bg-muted/30">
-                  <td className="px-3 py-2">{r.year ?? '—'}</td>
-                  <td className="px-3 py-2">{r.make ?? '—'}</td>
-                  <td className="px-3 py-2">{r.model ?? '—'}</td>
-                  <td className="px-3 py-2">
-                    <span className="line-clamp-1">{r.sub_model ?? '—'}</span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className="font-mono text-xs tracking-tight whitespace-nowrap">
-                      {r.vin ?? '—'}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap">
-                    {r.odometer ?? '—'}
-                  </td>
-                  <td className="px-3 py-2">{r.wovr_status ?? '—'}</td>
-                  <td className="px-3 py-2">{r.incident_type ?? '—'}</td>
-                  <td className="px-3 py-2">{r.sale_status ?? '—'}</td>
-                  <td className="px-3 py-2 text-right">
-                    {formatMoney(r.sold_price)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    {formatDate(r.sold_date)}
-                  </td>
-                  <td className="px-3 py-2">{r.auction_house ?? '—'}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    {r.buyer_number ?? '—'}
-                  </td>
-                  <td className="px-3 py-2">{r.state ?? '—'}</td>
+          {/* Sticky header inside scroll area */}
+          <div className="table-wrap">
+            <table className="w-full text-sm table-auto">
+              <thead className="sticky-head">
+                <tr>
+                  {DISPLAY.map(({ id, label }) => (
+                    <th
+                      key={id}
+                      onClick={() => toggleSort(id)}
+                      className="px-3 py-2 text-left cursor-pointer"
+                    >
+                      <div className="inline-flex items-center gap-2">
+                        <span>{label}</span>
+                        {sort.column === id && (
+                          <span className="sort-ind">{sort.direction}</span>
+                        )}
+                      </div>
+                    </th>
+                  ))}
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {rows.length === 0 && !loading && (
+                  <tr>
+                    <td colSpan={DISPLAY.length} className="p-8 text-center text-gray-400">
+                      No results.
+                    </td>
+                  </tr>
+                )}
+                {rows.map((r, i) => (
+                  <tr key={r.id} className={i % 2 ? 'row alt' : 'row'}>
+                    {DISPLAY.map(({ id }) => (
+                      <td key={id} className="px-3 py-2" data-col={id}>
+                        {id === 'sold_date' && r.sold_date
+                          ? new Date(r.sold_date).toLocaleDateString() // date only
+                          : id === 'sold_price' && r.sold_price != null
+                          ? `$${Number(r.sold_price).toLocaleString()}`
+                          : id === 'vin'
+                          ? <span className="vin">{r[id]}</span>
+                          : (r[id] ?? '—')}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
-      <div className="h-6" />
-    </div>
+        {/* Page styles */}
+        <style jsx global>{`
+          :root {
+            --accent: #32CD32;      /* lime green */
+            --accent-700: #28ad28;  /* darker hover */
+            --bg: #ffffff;
+            --fg: #111111;
+            --card: #ffffff;
+            --border: rgba(0, 0, 0, 0.12);
+            --muted: rgba(0, 0, 0, 0.04);
+            --hover: rgba(0, 0, 0, 0.05);
+            --shadow: 0 2px 8px rgba(0,0,0,0.06);
+          }
+          .dark {
+            --accent: #38e038;
+            --accent-700: #22c122;
+            --bg: #0c0d10;
+            --fg: #f3f4f6;
+            --card: #111317;
+            --border: rgba(255, 255, 255, 0.16);
+            --muted: rgba(255, 255, 255, 0.06);
+            --hover: rgba(255, 255, 255, 0.06);
+            --shadow: 0 2px 10px rgba(0,0,0,0.35);
+          }
+          html, body { background: var(--bg); color: var(--fg); }
+
+          .brand-bar {
+            background: var(--accent);
+            color: #0b1208;
+            border-bottom: 1px solid rgba(0,0,0,.08);
+          }
+          .brand-bar .wrap {
+            max-width: min(100vw - 24px, 1600px);
+            margin: 0 auto;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+          }
+          .brand-bar .logo {
+            font-weight: 800;
+            letter-spacing: 0.3px;
+          }
+          .nav { display: flex; gap: 16px; }
+          .nav-link { font-weight: 600; opacity: .85; }
+          .nav-link.active { opacity: 1; text-decoration: underline; text-underline-offset: 4px; }
+
+          .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            box-shadow: var(--shadow);
+          }
+          .card-title {
+            font-weight: 700;
+            padding: 14px 16px 6px;
+            opacity: .85;
+          }
+          .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+          }
+
+          .input {
+            height: 40px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 0 10px;
+            background: var(--card);
+            color: var(--fg);
+            outline: none;
+            transition: box-shadow .15s ease, border-color .15s ease;
+          }
+          .input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+          }
+
+          .btn {
+            height: 38px;
+            padding: 0 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: var(--card);
+            color: var(--fg);
+            transition: background .15s ease, transform .05s ease, border-color .15s ease;
+          }
+          .btn:active { transform: translateY(1px); }
+          .btn.ghost:hover { background: var(--hover); }
+          .btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #071106;
+            font-weight: 700;
+          }
+          .btn.primary:hover { background: var(--accent-700); border-color: var(--accent-700); }
+
+          .count-chip {
+            margin-left: 8px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--muted);
+          }
+
+          /* table */
+          .table-wrap {
+            max-height: 70vh;
+            overflow: auto;
+          }
+          .sticky-head th {
+            position: sticky;
+            top: 0;              /* sticks inside the scroll area */
+            z-index: 1;
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+          }
+          .sort-ind {
+            text-transform: uppercase;
+            font-size: 11px;
+            color: #6b7280;
+          }
+
+          /* zebra & hover */
+          .row { border-top: 1px solid var(--border); }
+          .row.alt { background: var(--muted); }
+          .row:hover { background: var(--hover); }
+
+          /* Responsive, single-line key columns */
+          td[data-col="vin"] .vin {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+              "Liberation Mono", "Courier New", monospace;
+            font-size: 12px;
+            white-space: nowrap;
+          }
+          /* clamp(min, fluid, max) so widths adapt to user resolution */
+          td[data-col="vin"] { white-space: nowrap; min-width: clamp(180px, 22vw, 360px); }
+          td[data-col="sub_model"] { white-space: nowrap; min-width: clamp(140px, 16vw, 320px); }
+          td[data-col="auction_house"] { white-space: nowrap; min-width: clamp(100px, 12vw, 220px); }
+          td[data-col="odometer"] { white-space: nowrap; min-width: clamp(90px, 10vw, 140px); }
+          td[data-col="sold_price"] { white-space: nowrap; min-width: clamp(100px, 10vw, 160px); }
+          td[data-col="sold_date"] { white-space: nowrap; min-width: clamp(110px, 11vw, 180px); }
+          td[data-col="buyer_number"], td[data-col="state"] { white-space: nowrap; }
+        `}</style>
+      </main>
+    </>
+  );
+}
+
+function Field({ label, children }: { label: string; children: any }) {
+  return (
+    <label className="flex flex-col gap-1 text-sm">
+      <span className="text-gray-600 dark:text-gray-300">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Select({
+  value,
+  onChange,
+  options,
+  loading,
+}: {
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  options: string[];
+  loading?: boolean;
+}) {
+  return (
+    <select className="input" value={value} onChange={onChange} disabled={loading}>
+      <option value="">{loading ? 'Loading…' : 'All'}</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
   );
 }
