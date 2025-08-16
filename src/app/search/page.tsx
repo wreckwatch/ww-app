@@ -287,7 +287,7 @@ export default function SearchPage() {
       {/* Page container */}
       <div className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
         {/* Filters */}
-        <div className="relative z-20 rounded-lg border p-4 mb-6 bg-[var(--card)]">
+        <div className="rounded-lg border p-4 mb-6 bg-[var(--card)]">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <Field label="VIN (exact)">
               <input
@@ -429,7 +429,7 @@ export default function SearchPage() {
         </div>
 
         {/* Results */}
-        <div className="relative z-20 rounded-lg border p-4 mb-6 bg-[var(--card)]">
+        <div className="rounded-lg border p-4 mb-6 bg-[var(--card)]">
           <div className="flex items-center justify-between p-4 border-b">
             <div className="text-sm">
               Results{' '}
