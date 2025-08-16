@@ -287,7 +287,7 @@ export default function SearchPage() {
       {/* Page container */}
       <div className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
         {/* Filters */}
-        <div className="rounded-lg border p-4 mb-6 bg-[var(--card)]">
+        <div className="relative z-20 rounded-lg border p-4 mb-6 bg-[var(--card)] ww-filters">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <Field label="VIN (exact)">
               <input
@@ -429,7 +429,7 @@ export default function SearchPage() {
         </div>
 
         {/* Results */}
-        <div className="rounded-lg border p-4 mb-6 bg-[var(--card)]">
+        <div className="relative z-0 rounded-lg border p-4 mb-6 bg-[var(--card)] ww-results-card">
           <div className="flex items-center justify-between p-4 border-b">
             <div className="text-sm">
               Results{' '}
@@ -471,7 +471,7 @@ export default function SearchPage() {
 
           {error && <div className="p-4 text-red-500 text-sm">{error}</div>}
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto ww-results-scroll">
             <table className="w-full text-sm table-auto">
               <thead className="sticky-header">
                 <tr>
@@ -547,35 +547,30 @@ export default function SearchPage() {
         /* Body picks up the new background via Tailwind's bg-background rule */
         html, body { background: hsl(var(--background)); color: var(--fg); }
 
-/* Full width header with thin brand accent (full-bleed + sticky) */
-.ww-header {
-  background: var(--card);
-  border-bottom: 4px solid var(--accent);
+        /* Full width header with thin brand accent (full-bleed + sticky) */
+        .ww-header {
+          background: var(--card);
+          border-bottom: 4px solid var(--accent);
 
-  /* make it span the full viewport even if parent is centered/padded */
-  width: 100vw;
-  margin-left: 50%;
-  transform: translateX(-50%);
+          width: 100vw;
+          margin-left: 50%;
+          transform: translateX(-50%);
 
-  /* optional: keep it visible on scroll */
-  position: sticky;
-  top: 0;
-  z-index: 50;
+          position: sticky;
+          top: 0;
+          z-index: 50;
 
-  /* iOS safe-area support */
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
-}
-
-.ww-header__inner {
-  max-width: min(100vw - 24px, 1600px);
-  margin: 0 auto;
-  padding: 10px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
+          padding-left: env(safe-area-inset-left);
+          padding-right: env(safe-area-inset-right);
+        }
+        .ww-header__inner {
+          max-width: min(100vw - 24px, 1600px);
+          margin: 0 auto;
+          padding: 10px 16px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
         .ww-logo {
           font-weight: 700;
           letter-spacing: 0.2px;
@@ -638,6 +633,11 @@ export default function SearchPage() {
         td[data-col="sold_price"] { white-space: nowrap; min-width: clamp(100px, 10vw, 160px); }
         td[data-col="sold_date"] { white-space: nowrap; min-width: clamp(110px, 11vw, 180px); }
         td[data-col="buyer_number"], td[data-col="state"] { white-space: nowrap; }
+
+        /* === Native <select> dropdown overlay fix === */
+        .is-select-open .ww-results-scroll { overflow: visible !important; }
+        .is-select-open .ww-results-card  { z-index: 0 !important; } /* filters stay above */
+        .ww-filters { z-index: 30 !important; }
       `}</style>
     </div>
   );
@@ -663,8 +663,20 @@ function Select({
   options: string[];
   loading?: boolean;
 }) {
+  // Add/remove a body class so we can tweak overflow while the native popup is visible
+  const open = () => document.body.classList.add('is-select-open');
+  const close = () => document.body.classList.remove('is-select-open');
+
   return (
-    <select className="input" value={value} onChange={onChange} disabled={loading}>
+    <select
+      className="input"
+      value={value}
+      onChange={onChange}
+      disabled={loading}
+      onMouseDown={open}
+      onFocus={open}
+      onBlur={close}
+    >
       <option value="">{loading ? 'Loading…' : 'All'}</option>
       {options.map((o) => (
         <option key={o} value={o}>
