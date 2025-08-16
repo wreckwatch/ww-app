@@ -4,9 +4,6 @@
 
 @layer base {
   :root {
-      /* brand + layout helpers */
-    --brand: #32CD32;   /* top bar color */
-    --appbar-h: 64px;   /* header height used for sticky offsets */
     --background: 0 0% 100%;
     --foreground: 240 10% 3.9%;
     --card: 0 0% 100%;
@@ -49,7 +46,6 @@
     --border: 240 3.7% 15.9%;
     --input: 240 3.7% 15.9%;
     --ring: 240 4.9% 83.9%;
-    --brand: #32CD32;
   }
 }
 
