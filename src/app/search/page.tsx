@@ -16,7 +16,7 @@ type VehicleRow = {
   incident_type: string | null;   // Damage
   sale_status: string | null;     // Outcome
   sold_price: number | null;      // Amount
-  sold_date: string | null;       // Date
+  sold_date: string | null;       // Date (ISO)
   auction_house: string | null;   // House
   buyer_number: string | null;    // Buyer
   state: string | null;
@@ -29,9 +29,8 @@ const formatMoney = (n: number | null | undefined) =>
 const formatDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString() : '—';
 
-/** ---------- The Page ---------- */
 export default function SearchPage() {
-  // Create a browser Supabase client once
+  /** Create a browser Supabase client once */
   const supabase = useMemo<SupabaseClient>(
     () =>
       createClient(
@@ -55,7 +54,7 @@ export default function SearchPage() {
   const [auctionHouse, setAuctionHouse] = useState('All');
   const [state, setState] = useState('All');
 
-  /** Options for the dropdowns */
+  /** Options for dropdowns */
   const [optMake, setOptMake] = useState<string[]>([]);
   const [optModel, setOptModel] = useState<string[]>([]);
   const [optWovr, setOptWovr] = useState<string[]>([]);
@@ -72,26 +71,25 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /** ----------- Options loading (unique values) ----------- */
+  /** ----------- Load unique options ----------- */
   useEffect(() => {
     let cancelled = false;
 
+    async function uniq(column: keyof VehicleRow): Promise<string[]> {
+      const { data, error } = await supabase
+        .from('vehicles')
+        .select(String(column))
+        .not(String(column), 'is', null)
+        .neq(String(column), '')
+        .order(String(column), { ascending: true });
+
+      if (error) throw error;
+      const s = new Set<string>();
+      (data as any[]).forEach((r) => r[column] && s.add(String(r[column])));
+      return Array.from(s);
+    }
+
     async function loadOptions() {
-      // Helper: load unique values for a column
-      const uniq = async (column: string) => {
-        const { data, error } = await supabase
-          .from('vehicles')
-          .select(column)
-          .not(column, 'is', null)
-          .neq(column, '')
-          .order(column, { ascending: true });
-
-        if (error) throw error;
-        const s = new Set<string>();
-        (data as any[]).forEach((r) => r[column] && s.add(String(r[column])));
-        return Array.from(s);
-      };
-
       try {
         const [mks, mdls, wv, ss, dmg, auc, st] = await Promise.all([
           uniq('make'),
@@ -116,7 +114,9 @@ export default function SearchPage() {
     }
 
     loadOptions();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [supabase]);
 
   /** ----------- Query data ----------- */
@@ -129,23 +129,18 @@ export default function SearchPage() {
       const from = resetPage ? 0 : (page - 1) * pageSize;
       const to = from + pageSize - 1;
 
+      const columns =
+        'id,year,make,model,sub_model,vin,odometer,wovr_status,incident_type,sale_status,sold_price,sold_date,auction_house,buyer_number,state' as const;
+
       let q = supabase
         .from('vehicles')
-        .select(
-          [
-            'id', 'year', 'make', 'model', 'sub_model',
-            'vin', 'odometer', 'wovr_status', 'incident_type',
-            'sale_status', 'sold_price', 'sold_date',
-            'auction_house', 'buyer_number', 'state',
-          ].join(','),
-          { count: 'exact' }
-        )
-        .order('sold_date', { ascending: false, nullsFirst: false })
+        .select(columns, { count: 'exact' })
+        .order('sold_date', { ascending: false })
         .range(from, to);
 
       // Apply filters
       if (vin.trim()) {
-        // case-insensitive exact match
+        // Case-insensitive exact match (no wildcards)
         q = q.filter('vin', 'ilike', vin.trim());
       }
       if (buyer.trim()) q = q.eq('buyer_number', buyer.trim());
@@ -163,7 +158,8 @@ export default function SearchPage() {
       const { data, error, count } = await q;
       if (error) throw error;
 
-      setRows((data || []) as VehicleRow[]);
+      // **** Key fix for your TS compile error ****
+      setRows(((data ?? []) as unknown) as VehicleRow[]);
       setTotal(count || 0);
     } catch (e: any) {
       setError(e.message ?? 'Search failed.');
@@ -172,11 +168,11 @@ export default function SearchPage() {
     }
   };
 
-  // Initial search once some options load
+  // Initial search after options are in (or immediately if not needed)
   useEffect(() => {
-    if (optMake.length || optModel.length) fetchData(true);
+    fetchData(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [optMake.length, optModel.length]);
+  }, []);
 
   // Re-run when page/pageSize changes
   useEffect(() => {
@@ -204,8 +200,7 @@ export default function SearchPage() {
   };
   const nextPage = () =>
     setPage((p) => (p < Math.max(1, Math.ceil(total / pageSize)) ? p + 1 : p));
-  const prevPage = () =>
-    setPage((p) => (p > 1 ? p - 1 : p));
+  const prevPage = () => setPage((p) => (p > 1 ? p - 1 : p));
 
   /** --------------- RENDER --------------- */
   return (
@@ -219,7 +214,6 @@ export default function SearchPage() {
               Search Australian auction results by VIN, buyer number, make, model and more.
             </p>
           </div>
-          <div className="flex items-center gap-2">{/* future actions */}</div>
         </div>
       </header>
 
@@ -263,7 +257,9 @@ export default function SearchPage() {
               >
                 <option>All</option>
                 {optMake.map((v) => (
-                  <option key={v} value={v}>{v}</option>
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
                 ))}
               </select>
             </div>
@@ -278,7 +274,9 @@ export default function SearchPage() {
               >
                 <option>All</option>
                 {optModel.map((v) => (
-                  <option key={v} value={v}>{v}</option>
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
                 ))}
               </select>
             </div>
@@ -315,7 +313,9 @@ export default function SearchPage() {
               >
                 <option>All</option>
                 {optWovr.map((v) => (
-                  <option key={v} value={v}>{v}</option>
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
                 ))}
               </select>
             </div>
@@ -330,7 +330,9 @@ export default function SearchPage() {
               >
                 <option>All</option>
                 {optSale.map((v) => (
-                  <option key={v} value={v}>{v}</option>
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
                 ))}
               </select>
             </div>
@@ -345,7 +347,9 @@ export default function SearchPage() {
               >
                 <option>All</option>
                 {optDamage.map((v) => (
-                  <option key={v} value={v}>{v}</option>
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
                 ))}
               </select>
             </div>
@@ -371,7 +375,9 @@ export default function SearchPage() {
               >
                 <option>All</option>
                 {optAuction.map((v) => (
-                  <option key={v} value={v}>{v}</option>
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
                 ))}
               </select>
             </div>
@@ -386,7 +392,9 @@ export default function SearchPage() {
               >
                 <option>All</option>
                 {optState.map((v) => (
-                  <option key={v} value={v}>{v}</option>
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
                 ))}
               </select>
             </div>
@@ -424,7 +432,9 @@ export default function SearchPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <label className="sr-only" htmlFor="pageSize">page size</label>
+          <label className="sr-only" htmlFor="pageSize">
+            page size
+          </label>
           <select
             id="pageSize"
             value={pageSize}
@@ -432,7 +442,9 @@ export default function SearchPage() {
             className="rounded-md border border-border bg-card px-2 py-1 text-sm"
           >
             {[25, 50, 100].map((n) => (
-              <option key={n} value={n}>{n} / page</option>
+              <option key={n} value={n}>
+                {n} / page
+              </option>
             ))}
           </select>
 
@@ -473,7 +485,7 @@ export default function SearchPage() {
       {/* TABLE */}
       <div className="mt-2 overflow-x-auto rounded-xl border border-border bg-card">
         <table className="w-full table-fixed text-sm">
-          <thead className="sticky top-[var(--appbar-h)] z-10 bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-muted/60">
+          <thead className="sticky top-0 z-10 bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-muted/60">
             <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
               <th className="w-[72px] px-3 py-2">Year</th>
               <th className="w-[120px] px-3 py-2">Make</th>
@@ -495,7 +507,10 @@ export default function SearchPage() {
           <tbody className="divide-y divide-border">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={14} className="px-3 py-10 text-center text-sm text-muted-foreground">
+                <td
+                  colSpan={14}
+                  className="px-3 py-10 text-center text-sm text-muted-foreground"
+                >
                   No results. Adjust your filters and try again.
                 </td>
               </tr>
@@ -526,7 +541,9 @@ export default function SearchPage() {
                     {formatDate(r.sold_date)}
                   </td>
                   <td className="px-3 py-2">{r.auction_house ?? '—'}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{r.buyer_number ?? '—'}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {r.buyer_number ?? '—'}
+                  </td>
                   <td className="px-3 py-2">{r.state ?? '—'}</td>
                 </tr>
               ))
