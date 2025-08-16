@@ -287,7 +287,7 @@ export default function SearchPage() {
       {/* Page container */}
       <div className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
         {/* Filters */}
-        <div className="relative z-20 rounded-lg border p-4 mb-6 bg-[var(--card)] ww-filters">
+        <div className="rounded-lg border p-4 mb-6 bg-[var(--card)]">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <Field label="VIN (exact)">
               <input
@@ -527,16 +527,16 @@ export default function SearchPage() {
         /* IMPORTANT: use Tailwind's HSL tokens so body { @apply bg-background } picks this up */
         :root {
           --accent: #32cd32;                   /* lime brand */
-          --background: 220 20% 97%;           /* soft app canvas (#f5f7fb-ish) */
+          --background: 220 20% 97%;           /* soft app canvas */
           --fg: #111111;
-          --card: #ffffff;                      /* cards stay white */
+          --card: #ffffff;                     /* cards stay white */
           --border: rgba(0, 0, 0, 0.12);
           --muted: rgba(0, 0, 0, 0.05);
           --hover: rgba(0, 0, 0, 0.06);
         }
         .dark {
           --accent: #34e684;
-          --background: 222 47% 7%;            /* deep slate for dark canvas */
+          --background: 222 47% 7%;
           --fg: #f3f4f6;
           --card: #111317;
           --border: rgba(255, 255, 255, 0.16);
@@ -551,15 +551,12 @@ export default function SearchPage() {
         .ww-header {
           background: var(--card);
           border-bottom: 4px solid var(--accent);
-
           width: 100vw;
           margin-left: 50%;
           transform: translateX(-50%);
-
           position: sticky;
           top: 0;
           z-index: 50;
-
           padding-left: env(safe-area-inset-left);
           padding-right: env(safe-area-inset-right);
         }
@@ -619,6 +616,15 @@ export default function SearchPage() {
         /* Row hover */
         .row-hover:hover { background: var(--hover); }
 
+        /* Make native <select> dropdowns visible even inside the table scroller */
+        .ww-results-scroll { 
+          overflow-x: auto; 
+          overflow-y: visible; 
+        }
+        .ww-results-card { 
+          overflow: visible; 
+        }
+
         /* Responsive, single-line key columns */
         td[data-col="vin"] .vin {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -633,11 +639,6 @@ export default function SearchPage() {
         td[data-col="sold_price"] { white-space: nowrap; min-width: clamp(100px, 10vw, 160px); }
         td[data-col="sold_date"] { white-space: nowrap; min-width: clamp(110px, 11vw, 180px); }
         td[data-col="buyer_number"], td[data-col="state"] { white-space: nowrap; }
-
-        /* === Native <select> dropdown overlay fix === */
-        .is-select-open .ww-results-scroll { overflow: visible !important; }
-        .is-select-open .ww-results-card  { z-index: 0 !important; } /* filters stay above */
-        .ww-filters { z-index: 30 !important; }
       `}</style>
     </div>
   );
@@ -663,20 +664,8 @@ function Select({
   options: string[];
   loading?: boolean;
 }) {
-  // Add/remove a body class so we can tweak overflow while the native popup is visible
-  const open = () => document.body.classList.add('is-select-open');
-  const close = () => document.body.classList.remove('is-select-open');
-
   return (
-    <select
-      className="input"
-      value={value}
-      onChange={onChange}
-      disabled={loading}
-      onMouseDown={open}
-      onFocus={open}
-      onBlur={close}
-    >
+    <select className="input" value={value} onChange={onChange} disabled={loading}>
       <option value="">{loading ? 'Loading…' : 'All'}</option>
       {options.map((o) => (
         <option key={o} value={o}>
