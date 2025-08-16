@@ -1,618 +1,645 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { createClient, PostgrestSingleResponse } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabaseClient';
 
-/** ---------- Supabase client (browser) ---------- */
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+type InputChange = React.ChangeEvent<HTMLInputElement>;
+type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
-/** ---------- Types (adjust if your columns differ) ---------- */
-type VehicleRow = {
-  id: number;
-  year: number | null;
-  make: string | null;
-  model: string | null;
-  sub_model: string | null;        // Variant
-  vin: string | null;
-  odometer: number | null;         // ODO in km
-  wovr_status: string | null;      // WOVR
-  incident_type: string | null;    // Damage
-  sale_status: string | null;      // Outcome
-  sold_price: number | null;       // Amount
-  sold_date: string | null;        // Date (ISO string)
-  auction_house: string | null;    // House
-  state: string | null;
-  buyer_number: string | null;
-};
+const TABLE = 'vehicles';
 
-/** Distinct option utility */
-async function fetchDistinct<K extends keyof VehicleRow>(
-  column: K,
-  order: K
-): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('vehicles')
-    .select(column as string)
-    .not(column as string, 'is', null)
-    .neq(column as string, '')
-    .order(order as string, { ascending: true })
-    .limit(1000);
+/** Locked result columns (order + labels) */
+const DISPLAY = [
+  { id: 'year',          label: 'Year' },
+  { id: 'make',          label: 'Make' },
+  { id: 'model',         label: 'Model' },
+  { id: 'sub_model',     label: 'Variant' },
+  { id: 'vin',           label: 'VIN' },
+  { id: 'odometer',      label: 'ODO' },
+  { id: 'wovr_status',   label: 'WOVR' },
+  { id: 'incident_type', label: 'Damage' },
+  { id: 'sale_status',   label: 'Outcome' },
+  { id: 'sold_price',    label: 'Amount' },
+  { id: 'sold_date',     label: 'Date' },
+  { id: 'auction_house', label: 'House' },
+  { id: 'buyer_number',  label: 'Buyer' },
+  { id: 'state',         label: 'State' },
+] as const;
 
-  if (error || !data) return [];
-  const vals = (data as any[]).map((r) => r[column]).filter(Boolean) as string[];
-  return Array.from(new Set(vals));
+// Minimal list of columns fetched from DB (include id for stable keys)
+const QUERY_COLUMNS = ['id', ...DISPLAY.map(d => d.id)];
+
+// Columns allowed for sorting (fallback to id if not sortable)
+const SORTABLE = new Set<string>([...DISPLAY.map(d => d.id), 'id']);
+
+/** debounce hook */
+function useDebounce<T>(val: T, ms = 400) {
+  const [v, setV] = useState(val);
+  useEffect(() => {
+    const id = setTimeout(() => setV(val), ms);
+    return () => clearTimeout(id);
+  }, [val, ms]);
+  return v;
 }
 
-/** ---------- Page component ---------- */
-export default function SearchPage() {
-  /** Filters */
-  const [vin, setVin] = useState('');
-  const [buyer, setBuyer] = useState('');
-  const [yearFrom, setYearFrom] = useState('');
-  const [yearTo, setYearTo] = useState('');
-  const [priceMin, setPriceMin] = useState('');
-  const [priceMax, setPriceMax] = useState('');
+/** Theme toggle */
+function ThemeToggleButton() {
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
-  const [make, setMake] = useState('All');
-  const [model, setModel] = useState('All');
-  const [wovr, setWovr] = useState('All');
-  const [saleStatus, setSaleStatus] = useState('All');
-  const [auctionHouse, setAuctionHouse] = useState('All');
-  const [damage, setDamage] = useState('All');
-  const [state, setState] = useState('All');
-
-  /** Dropdown options */
-  const [makes, setMakes] = useState<string[]>([]);
-  const [models, setModels] = useState<string[]>([]);
-  const [wovrs, setWovrs] = useState<string[]>([]);
-  const [houses, setHouses] = useState<string[]>([]);
-  const [damages, setDamages] = useState<string[]>([]);
-  const [states, setStates] = useState<string[]>([]);
-  const saleStatuses = useMemo(() => ['All', 'SOLD', 'REFERRED', 'PASSED IN', 'WITHDRAWN'], []);
-
-  /** Results + paging */
-  const [rows, setRows] = useState<VehicleRow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(25);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  /** Load dropdowns once */
   useEffect(() => {
-    (async () => {
-      const [mk, md, wo, ho, da, st] = await Promise.all([
-        fetchDistinct('make', 'make'),
-        fetchDistinct('model', 'model'),
-        fetchDistinct('wovr_status', 'wovr_status'),
-        fetchDistinct('auction_house', 'auction_house'),
-        fetchDistinct('incident_type', 'incident_type'),
-        fetchDistinct('state', 'state'),
-      ]);
-      setMakes(['All', ...mk]);
-      setModels(['All', ...md]);
-      setWovrs(['All', ...wo]);
-      setHouses(['All', ...ho]);
-      setDamages(['All', ...da]);
-      setStates(['All', ...st]);
-    })();
+    try {
+      const stored = localStorage.getItem('theme') as 'light' | 'dark' | null;
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const initial = stored ?? (prefersDark ? 'dark' : 'light');
+      setTheme(initial);
+      document.documentElement.classList.toggle('dark', initial === 'dark');
+    } catch {}
   }, []);
 
-  /** Build and run the search */
-  async function runSearch(resetPage = false) {
+  function toggle() {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    document.documentElement.classList.toggle('dark', next === 'dark');
     try {
-      setLoading(true);
-      setErr(null);
+      localStorage.setItem('theme', next);
+    } catch {}
+  }
 
-      const currentPage = resetPage ? 1 : page;
-      const from = (currentPage - 1) * perPage;
-      const to = from + perPage - 1;
+  return (
+    <button className="btn btn-ghost" onClick={toggle} aria-label="Toggle theme">
+      {theme === 'dark' ? '🌙 Dark' : '☀️ Light'}
+    </button>
+  );
+}
 
-      let q = supabase
-        .from('vehicles')
-        .select('*', { count: 'exact' })
-        .order('sold_date', { ascending: false })
-        .range(from, to);
+export default function SearchPage() {
+  const [filters, setFilters] = useState({
+    vin: '',
+    buyer_no: '',
+    make: '',
+    model: '',
+    yearFrom: '',
+    yearTo: '',
+    wovr_status: '',
+    sale_status: '',
+    incident_type: '',
+    priceMin: '',
+    priceMax: '',
+    auction_house: '',
+    state: '',
+  });
+  const debounced = useDebounce(filters, 400);
+
+  const [rows, setRows] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const [opts, setOpts] = useState<Record<string, string[]>>({
+    make: [],
+    model: [],
+    wovr_status: [],
+    sale_status: [],
+    incident_type: [],
+    auction_house: [],
+    state: [],
+  });
+  const [optsLoading, setOptsLoading] = useState(false);
+
+  // Sorting/paging
+  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>({
+    column: 'sold_date',
+    direction: 'desc',
+  });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
+
+  // Load dropdown options – uses your RPCs (including distinct_incident_type)
+  async function loadAllOptions(makeFilter?: string) {
+    setOptsLoading(true);
+    try {
+      const [
+        makeRes,
+        wovrRes,
+        saleRes,
+        houseRes,
+        stateRes,
+        modelRes,
+        damageRes,
+      ] = await Promise.all([
+        supabase.rpc('distinct_make'),
+        supabase.rpc('distinct_wovr_status'),
+        supabase.rpc('distinct_sale_status'),
+        supabase.rpc('distinct_auction_house'),
+        supabase.rpc('distinct_state'),
+        makeFilter
+          ? supabase.rpc('distinct_model', { make_filter: makeFilter })
+          : supabase.rpc('distinct_model'),
+        supabase.rpc('distinct_incident_type'),
+      ]);
+
+      setOpts({
+        make: (makeRes.data ?? []).map((r: any) => r.make),
+        wovr_status: (wovrRes.data ?? []).map((r: any) => r.wovr_status),
+        sale_status: (saleRes.data ?? []).map((r: any) => r.sale_status),
+        auction_house: (houseRes.data ?? []).map((r: any) => r.auction_house),
+        state: (stateRes.data ?? []).map((r: any) => r.state),
+        model: (modelRes.data ?? []).map((r: any) => r.model),
+        incident_type: (damageRes.data ?? []).map((r: any) => r.incident_type),
+      });
+    } finally {
+      setOptsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAllOptions();
+  }, []);
+
+  // When make changes, update models list (and reset model if it becomes invalid)
+  useEffect(() => {
+    (async () => {
+      if (!filters.make) {
+        loadAllOptions(undefined);
+        return;
+      }
+      const { data } = await supabase.rpc('distinct_model', {
+        make_filter: filters.make,
+      });
+      const models = (data ?? []).map((r: any) => r.model);
+      setOpts((o) => ({ ...o, model: models }));
+      if (filters.model && !models.includes(filters.model)) {
+        setFilters((f) => ({ ...f, model: '' }));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.make]);
+
+  // Fetch on changes (debounced)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    fetchData();
+  }, [debounced, sort, page, pageSize]);
+
+  function update(k: keyof typeof filters, v: string) {
+    setPage(1);
+    setFilters((s) => ({ ...s, [k]: v }));
+  }
+  const onInput = (k: keyof typeof filters) => (e: InputChange) =>
+    update(k, e.target.value);
+  const onSelect = (k: keyof typeof filters) => (e: SelectChange) =>
+    update(k, e.target.value);
+
+  async function fetchData() {
+    setLoading(true);
+    setError('');
+    try {
+      // Normalise ranges
+      let { yearFrom, yearTo, priceMin, priceMax } = debounced;
+      if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) {
+        [yearFrom, yearTo] = [yearTo, yearFrom];
+      }
+      if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) {
+        [priceMin, priceMax] = [priceMax, priceMin];
+      }
+
+      let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), {
+        count: 'exact',
+      });
+
+      const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax };
 
       // VIN exact (case-insensitive)
-      if (vin.trim()) q = q.ilike('vin', vin.trim().toUpperCase());
+      if (f.vin.trim()) q = q.ilike('vin', f.vin.trim());
+      // Buyer number exact (case-insensitive)
+      if (f.buyer_no.trim()) q = q.ilike('buyer_number', f.buyer_no.trim());
 
-      // Buyer number exact
-      if (buyer.trim()) q = q.eq('buyer_number', buyer.trim());
+      if (f.make) q = q.eq('make', f.make);
+      if (f.model) q = q.eq('model', f.model);
+      if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
+      if (f.yearTo) q = q.lte('year', Number(f.yearTo));
+      if (f.wovr_status) q = q.eq('wovr_status', f.wovr_status);
+      if (f.sale_status) q = q.eq('sale_status', f.sale_status);
+      if (f.incident_type) q = q.eq('incident_type', f.incident_type);
+      if (f.priceMin) q = q.gte('sold_price', Number(f.priceMin));
+      if (f.priceMax) q = q.lte('sold_price', Number(f.priceMax));
+      if (f.auction_house) q = q.eq('auction_house', f.auction_house);
+      if (f.state) q = q.eq('state', f.state);
 
-      if (make !== 'All') q = q.eq('make', make);
-      if (model !== 'All') q = q.eq('model', model);
-      if (wovr !== 'All') q = q.eq('wovr_status', wovr);
-      if (saleStatus !== 'All') q = q.eq('sale_status', saleStatus);
-      if (auctionHouse !== 'All') q = q.eq('auction_house', auctionHouse);
-      if (damage !== 'All') q = q.eq('incident_type', damage);
-      if (state !== 'All') q = q.eq('state', state);
+      const sortCol = SORTABLE.has(sort.column) ? sort.column : 'id';
+      q = q.order(sortCol, { ascending: sort.direction === 'asc' });
 
-      if (yearFrom) q = q.gte('year', Number(yearFrom));
-      if (yearTo) q = q.lte('year', Number(yearTo));
-      if (priceMin) q = q.gte('sold_price', Number(priceMin));
-      if (priceMax) q = q.lte('sold_price', Number(priceMax));
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      q = q.range(from, to);
 
-      const { data, error, count } = (await q) as PostgrestSingleResponse<VehicleRow[]>;
+      const { data, error, count } = await q;
       if (error) throw error;
-
       setRows(data || []);
       setTotal(count || 0);
-      if (resetPage) setPage(1);
     } catch (e: any) {
-      setErr(e.message || 'Search failed.');
+      setError(e.message || 'Failed to fetch');
+      setRows([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    runSearch(true); // initial load
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  function toggleSort(col: string) {
+    if (!SORTABLE.has(col)) return;
+    setSort((s) => ({
+      column: col,
+      direction: s.column === col && s.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  }
 
-  /** Helpers */
-  function clearAll() {
-    setVin('');
-    setBuyer('');
-    setYearFrom('');
-    setYearTo('');
-    setPriceMin('');
-    setPriceMax('');
-    setMake('All');
-    setModel('All');
-    setWovr('All');
-    setSaleStatus('All');
-    setAuctionHouse('All');
-    setDamage('All');
-    setState('All');
+  function clearFilters() {
+    setFilters({
+      vin: '',
+      buyer_no: '',
+      make: '',
+      model: '',
+      yearFrom: '',
+      yearTo: '',
+      wovr_status: '',
+      sale_status: '',
+      incident_type: '',
+      priceMin: '',
+      priceMax: '',
+      auction_house: '',
+      state: '',
+    });
     setPage(1);
-    runSearch(true);
   }
-
-  function nextPage() {
-    if (page * perPage >= total) return;
-    setPage((p) => p + 1);
-  }
-  function prevPage() {
-    if (page === 1) return;
-    setPage((p) => p - 1);
-  }
-  useEffect(() => {
-    runSearch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, perPage]);
-
-  /** Mode toggle (light/dark) – optional */
-  function toggleMode() {
-    document.documentElement.classList.toggle('dark');
-  }
-
-  /** Formatters */
-  const fmtMoney = (n: number | null) =>
-    typeof n === 'number' ? n.toLocaleString('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 }) : '—';
-  const fmtKm = (n: number | null) => (typeof n === 'number' ? `${n.toLocaleString()} km` : '—');
-  const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString('en-AU') : '—');
 
   return (
-    <>
-      {/* FULL-WIDTH WHITE HEADER WITH THIN BRAND ACCENT */}
-      <header className="site-header">
-        <div className="site-header__inner">
-          <div className="brand">WreckWatch</div>
-          <div className="header-actions">
-            <button className="mode-pill" onClick={toggleMode} aria-label="Toggle theme">
-              <span className="dot" /> Light / Dark
-            </button>
-          </div>
+    <div className="min-h-screen">
+      {/* Full-width brand bar with thin accent */}
+      <header className="ww-header">
+        <div className="ww-header__inner">
+          <div className="ww-logo">WreckWatch</div>
+          <ThemeToggleButton />
         </div>
       </header>
 
-      {/* PAGE CONTENT SHELL */}
-      <main className="page-shell">
-        {/* Filters Card */}
-        <section className="filters-card">
-          <div className="filters-grid">
-            {/* Row 1 */}
-            <div className="form-group">
-              <label>VIN (exact)</label>
-              <input value={vin} onChange={(e) => setVin(e.target.value)} placeholder="e.g. MR0FZ22G401062065" />
-            </div>
-            <div className="form-group">
-              <label>Buyer number (exact)</label>
-              <input value={buyer} onChange={(e) => setBuyer(e.target.value)} placeholder="e.g. B12345" />
-            </div>
-            <div className="form-group">
-              <label>Make</label>
-              <select value={make} onChange={(e) => setMake(e.target.value)}>
-                {makes.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Model</label>
-              <select value={model} onChange={(e) => setModel(e.target.value)}>
-                {models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
+      {/* Page container */}
+      <div className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
+        {/* Filters */}
+        <div className="rounded-lg border p-4 mb-6 bg-[var(--card)]">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <Field label="VIN (exact)">
+              <input
+                className="input"
+                value={filters.vin}
+                onChange={onInput('vin')}
+                placeholder="e.g. MR0FZ22G401062065"
+              />
+            </Field>
 
-            {/* Row 2 */}
-            <div className="form-group">
-              <label>Year (From)</label>
-              <input value={yearFrom} onChange={(e) => setYearFrom(e.target.value)} placeholder="e.g. 2010" inputMode="numeric" />
-            </div>
-            <div className="form-group">
-              <label>Year (To)</label>
-              <input value={yearTo} onChange={(e) => setYearTo(e.target.value)} placeholder="e.g. 2025" inputMode="numeric" />
-            </div>
-            <div className="form-group">
-              <label>WOVR Status</label>
-              <select value={wovr} onChange={(e) => setWovr(e.target.value)}>
-                {wovrs.map((w) => (
-                  <option key={w} value={w}>
-                    {w}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Sale Status</label>
-              <select value={saleStatus} onChange={(e) => setSaleStatus(e.target.value)}>
-                {saleStatuses.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Field label="Buyer number (exact)">
+              <input
+                className="input"
+                value={filters.buyer_no}
+                onChange={onInput('buyer_no')}
+                placeholder="e.g. B12345"
+              />
+            </Field>
 
-            {/* Row 3 */}
-            <div className="form-group">
-              <label>Damage</label>
-              <select value={damage} onChange={(e) => setDamage(e.target.value)}>
-                {damages.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Price Min</label>
-              <input value={priceMin} onChange={(e) => setPriceMin(e.target.value)} placeholder="e.g. 5000" inputMode="numeric" />
-            </div>
-            <div className="form-group">
-              <label>Price Max</label>
-              <input value={priceMax} onChange={(e) => setPriceMax(e.target.value)} placeholder="e.g. 50000" inputMode="numeric" />
-            </div>
-            <div className="form-group">
-              <label>Auction House</label>
-              <select value={auctionHouse} onChange={(e) => setAuctionHouse(e.target.value)}>
-                {houses.map((h) => (
-                  <option key={h} value={h}>
-                    {h}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Field label="Make">
+              <Select
+                value={filters.make}
+                onChange={onSelect('make')}
+                options={opts.make}
+                loading={optsLoading}
+              />
+            </Field>
 
-            {/* Row 4 */}
-            <div className="form-group">
-              <label>State</label>
-              <select value={state} onChange={(e) => setState(e.target.value)}>
-                {states.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Field label="Model">
+              <Select
+                value={filters.model}
+                onChange={onSelect('model')}
+                options={opts.model}
+                loading={optsLoading}
+              />
+            </Field>
 
-            <div className="form-actions">
-              <button className="btn btn-primary" onClick={() => runSearch(true)} disabled={loading}>
-                {loading ? 'Searching…' : 'Search'}
+            <Field label="Year (From)">
+              <input
+                className="input"
+                type="number"
+                value={filters.yearFrom}
+                onChange={onInput('yearFrom')}
+                placeholder="e.g. 2015"
+              />
+            </Field>
+
+            <Field label="Year (To)">
+              <input
+                className="input"
+                type="number"
+                value={filters.yearTo}
+                onChange={onInput('yearTo')}
+                placeholder="e.g. 2024"
+              />
+            </Field>
+
+            <Field label="WOVR Status">
+              <Select
+                value={filters.wovr_status}
+                onChange={onSelect('wovr_status')}
+                options={opts.wovr_status}
+                loading={optsLoading}
+              />
+            </Field>
+
+            <Field label="Sale Status">
+              <Select
+                value={filters.sale_status}
+                onChange={onSelect('sale_status')}
+                options={opts.sale_status}
+                loading={optsLoading}
+              />
+            </Field>
+
+            <Field label="Damage">
+              <Select
+                value={filters.incident_type}
+                onChange={onSelect('incident_type')}
+                options={opts.incident_type}
+                loading={optsLoading}
+              />
+            </Field>
+
+            <Field label="Price Min">
+              <input
+                className="input"
+                type="number"
+                value={filters.priceMin}
+                onChange={onInput('priceMin')}
+                placeholder="e.g. 1000"
+              />
+            </Field>
+
+            <Field label="Price Max">
+              <input
+                className="input"
+                type="number"
+                value={filters.priceMax}
+                onChange={onInput('priceMax')}
+                placeholder="e.g. 50000"
+              />
+            </Field>
+
+            <Field label="Auction House">
+              <Select
+                value={filters.auction_house}
+                onChange={onSelect('auction_house')}
+                options={opts.auction_house}
+                loading={optsLoading}
+              />
+            </Field>
+
+            <Field label="State">
+              <Select
+                value={filters.state}
+                onChange={onSelect('state')}
+                options={opts.state}
+                loading={optsLoading}
+              />
+            </Field>
+
+            <div className="flex items-end gap-2">
+              <button
+                className="btn btn-accent"
+                onClick={() => {
+                  setPage(1);
+                  fetchData();
+                }}
+                disabled={loading}
+              >
+                {loading ? 'Loading…' : 'Search'}
               </button>
-              <button className="btn" onClick={clearAll} disabled={loading}>
+              <button className="btn" onClick={clearFilters} disabled={loading}>
                 Clear
               </button>
             </div>
           </div>
-        </section>
+        </div>
 
         {/* Results */}
-        <section className="results-card">
-          <div className="results-top">
-            <div className="muted">
-              Results <span className="chip">{total.toLocaleString()} items</span>
+        <div className="rounded-lg border bg-[var(--card)]">
+          <div className="flex items-center justify-between p-4 border-b">
+            <div className="text-sm">
+              Results{' '}
+              <span className="ml-2 rounded-full bg-black/10 dark:bg-white/10 px-2 py-0.5">
+                {total.toLocaleString()} items
+              </span>
             </div>
-            <div className="pager">
-              <select value={perPage} onChange={(e) => setPerPage(Number(e.target.value))}>
-                {[25, 50, 100].map((n) => (
-                  <option key={n} value={n}>
+            <div className="flex items-center gap-2">
+              <select
+                className="input w-28"
+                value={String(pageSize)}
+                onChange={(e: SelectChange) => setPageSize(Number(e.target.value))}
+              >
+                {[10, 25, 50, 100].map((n) => (
+                  <option key={n} value={String(n)}>
                     {n} / page
                   </option>
                 ))}
               </select>
-              <button className="btn" onClick={prevPage} disabled={page === 1}>
+              <button
+                className="btn"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+              >
                 Prev
               </button>
-              <div className="muted">
-                {page} / {Math.max(1, Math.ceil(total / perPage))}
+              <div className="text-sm tabular-nums">
+                {page} / {totalPages}
               </div>
-              <button className="btn" onClick={nextPage} disabled={page * perPage >= total}>
+              <button
+                className="btn"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
                 Next
               </button>
             </div>
           </div>
 
-          {err ? (
-            <div className="error">{err}</div>
-          ) : (
-            <div className="table-wrap">
-              <table className="results">
-                <thead className="table-head">
-                  <tr>
-                    <th>Year</th>
-                    <th>Make</th>
-                    <th>Model</th>
-                    <th>Variant</th>
-                    <th>VIN</th>
-                    <th>ODO</th>
-                    <th>WOVR</th>
-                    <th>Damage</th>
-                    <th>Outcome</th>
-                    <th>Amount</th>
-                    <th>Date</th>
-                    <th>House</th>
-                    <th>State</th>
-                    <th>Buyer</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.id}>
-                      <td>{r.year ?? '—'}</td>
-                      <td>{r.make ?? '—'}</td>
-                      <td>{r.model ?? '—'}</td>
-                      <td>{r.sub_model ?? '—'}</td>
-                      <td className="mono">{r.vin ?? '—'}</td>
-                      <td>{fmtKm(r.odometer)}</td>
-                      <td>{r.wovr_status ?? '—'}</td>
-                      <td>{r.incident_type ?? '—'}</td>
-                      <td>{r.sale_status ?? '—'}</td>
-                      <td>{fmtMoney(r.sold_price)}</td>
-                      <td>{fmtDate(r.sold_date)}</td>
-                      <td>{r.auction_house ?? '—'}</td>
-                      <td>{r.state ?? '—'}</td>
-                      <td className="mono">{r.buyer_number ?? '—'}</td>
-                    </tr>
-                  ))}
-                  {rows.length === 0 && !loading && (
-                    <tr>
-                      <td colSpan={14} className="muted center">
-                        No results.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </main>
+          {error && <div className="p-4 text-red-500 text-sm">{error}</div>}
 
-      {/* ---------- Styles (Option 1: white header with thin brand accent + sticky thead fix) ---------- */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm table-auto">
+              <thead className="themable">
+                <tr>
+                  {DISPLAY.map(({ id, label }) => (
+                    <th
+                      key={id}
+                      onClick={() => toggleSort(id)}
+                      className="px-3 py-2 text-left cursor-pointer"
+                    >
+                      <div className="inline-flex items-center gap-2">
+                        <span>{label}</span>
+                        {sort.column === id && (
+                          <span className="text-xs uppercase text-gray-500">
+                            {sort.direction}
+                          </span>
+                        )}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && !loading && (
+                  <tr>
+                    <td colSpan={DISPLAY.length} className="p-8 text-center text-gray-400">
+                      No results.
+                    </td>
+                  </tr>
+                )}
+                {rows.map((r) => (
+                  <tr key={r.id} className="border-t themable">
+                    {DISPLAY.map(({ id }) => (
+                      <td key={id} className="px-3 py-2" data-col={id}>
+                        {id === 'sold_date' && r.sold_date
+                          ? new Date(r.sold_date).toLocaleDateString()
+                          : id === 'sold_price' && r.sold_price != null
+                          ? `$${Number(r.sold_price).toLocaleString()}`
+                          : id === 'vin'
+                          ? <span className="vin">{r[id]}</span>
+                          : (r[id] ?? '—')}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Design tokens & component styles */}
       <style jsx global>{`
         :root {
-          --brand: #22c55e;            /* modern emerald; swap to #32cd32 if you prefer original lime */
-          --brand-600: #16a34a;
-          --brand-700: #15803d;
-
-          --background: #fafafa;
+          --accent: #32cd32;               /* lime brand */
+          --bg: #ffffff;
+          --fg: #111111;
           --card: #ffffff;
-          --text: #111827;
-          --muted-text: #6b7280;
-          --border: #e5e7eb;
-
-          --header-h: 64px;
-          --radius: 10px;
+          --border: rgba(0, 0, 0, 0.12);
+          --muted: rgba(0, 0, 0, 0.05);
+          --hover: rgba(0, 0, 0, 0.06);
         }
-        .dark:root {
-          --background: #0b1020;
-          --card: #0f1526;
-          --text: #e5e7eb;
-          --muted-text: #9aa3b2;
-          --border: #1f2a44;
+        .dark {
+          --accent: #34e684;
+          --bg: #0c0d10;
+          --fg: #f3f4f6;
+          --card: #111317;
+          --border: rgba(255, 255, 255, 0.16);
+          --muted: rgba(255, 255, 255, 0.06);
+          --hover: rgba(255, 255, 255, 0.08);
         }
+        html, body { background: var(--bg); color: var(--fg); }
 
-        html, body {
-          background: var(--background);
-          color: var(--text);
-        }
-
-        /* Full-bleed white header with thin brand underline */
-        .site-header {
-          position: sticky;
-          top: 0;
-          left: 0;
-          right: 0;
-          z-index: 50;
+        /* Full width header */
+        .ww-header {
+          width: 100%;
           background: var(--card);
-          box-shadow: 0 1px 0 var(--border);
+          border-bottom: 4px solid var(--accent); /* thin brand accent */
         }
-        .site-header::after {
-          content: "";
-          display: block;
-          height: 4px;
-          background: linear-gradient(90deg, var(--brand), var(--brand-600));
-        }
-        .site-header__inner {
-          max-width: 1200px;
+        .ww-header__inner {
+          max-width: min(100vw - 24px, 1600px);
           margin: 0 auto;
-          height: var(--header-h);
+          padding: 10px 16px;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 0 16px;
         }
-        .brand {
-          font-weight: 800;
-          letter-spacing: .2px;
-        }
-        .mode-pill {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 8px 12px;
-          border-radius: 999px;
-          background: #f4f4f5;
-          border: 1px solid #e4e4e7;
-          color: #111827;
-        }
-        .mode-pill .dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 999px;
-          background: var(--brand);
+        .ww-logo {
+          font-weight: 700;
+          letter-spacing: 0.2px;
         }
 
-        .page-shell {
-          max-width: 1200px;
-          margin: 24px auto 80px;
-          padding: 0 16px;
-        }
-
-        .filters-card, .results-card {
-          background: var(--card);
-          border: 1px solid var(--border);
-          border-radius: var(--radius);
-        }
-        .filters-card {
-          padding: 20px;
-          margin-bottom: 16px;
-        }
-        .filters-grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 14px 16px;
-        }
-        @media (max-width: 1100px) {
-          .filters-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-        }
-        @media (max-width: 820px) {
-          .filters-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        }
-        @media (max-width: 560px) {
-          .filters-grid { grid-template-columns: 1fr; }
-        }
-
-        .form-group label {
-          display: block;
-          font-size: 12px;
-          color: var(--muted-text);
-          margin-bottom: 6px;
-        }
-        .form-group input, .form-group select {
-          width: 100%;
+        .input {
           height: 38px;
           border: 1px solid var(--border);
-          background: var(--card);
-          color: var(--text);
-          border-radius: 8px;
+          border-radius: 10px;
           padding: 0 10px;
-        }
-        .form-actions {
-          grid-column: 1 / -1;
-          display: flex;
-          gap: 10px;
-          margin-top: 6px;
+          background: var(--card);
+          color: var(--fg);
         }
         .btn {
-          height: 38px;
-          padding: 0 14px;
-          border-radius: 8px;
+          height: 36px;
+          padding: 0 12px;
+          border-radius: 10px;
           border: 1px solid var(--border);
           background: var(--card);
-          color: var(--text);
+          color: var(--fg);
         }
-        .btn-primary {
-          background: var(--brand);
-          color: white;
-          border-color: var(--brand-600);
-        }
-        .btn-primary:hover { background: var(--brand-600); border-color: var(--brand-700); }
-
-        .results-card {
-          padding: 12px 12px 6px;
-        }
-        .results-top {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 6px 4px 10px;
-        }
-        .muted { color: var(--muted-text); }
-        .chip {
-          display: inline-block;
-          padding: 2px 8px;
-          border-radius: 999px;
-          border: 1px solid var(--border);
-          background: var(--card);
-          margin-left: 6px;
-        }
-        .pager {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .pager select {
-          height: 32px; border: 1px solid var(--border);
-          border-radius: 8px; background: var(--card); color: var(--text);
+        .btn-ghost { background: transparent; }
+        .btn-accent {
+          background: var(--accent);
+          border-color: var(--accent);
+          color: #0a0a0a;
+          font-weight: 600;
         }
 
-        .table-wrap { overflow: auto; }
-        table.results {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        table.results th, table.results td {
-          padding: 10px 8px;
+        .border { border-color: var(--border) !important; }
+        .border-t { border-top-color: var(--border) !important; }
+
+        thead.themable { background: var(--muted); }
+        tr.themable:hover { background: var(--hover); }
+
+        /* Responsive, single-line key columns */
+        td[data-col="vin"] .vin {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          font-size: 12px;
           white-space: nowrap;
-          border-bottom: 1px solid var(--border);
-          font-size: 14px;
         }
-        table.results td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
-
-        /* Sticky head fix: solid background + under shadow */
-        .table-head {
-          position: sticky;
-          top: var(--header-h);
-          z-index: 9;
-          background: var(--card);
-          box-shadow: 0 1px 0 var(--border);
-        }
-        .table-head th { background: inherit; }
-
-        .center { text-align: center; }
-        .error {
-          color: #b91c1c;
-          background: #fef2f2;
-          border: 1px solid #fecaca;
-          padding: 10px 12px;
-          border-radius: 8px;
-          margin: 8px;
-        }
+        /* clamp(min, fluid, max) so widths adapt to user resolution */
+        td[data-col="vin"] { white-space: nowrap; min-width: clamp(180px, 22vw, 360px); }
+        td[data-col="sub_model"] { white-space: nowrap; min-width: clamp(140px, 16vw, 280px); }
+        td[data-col="auction_house"] { white-space: nowrap; min-width: clamp(100px, 12vw, 220px); }
+        td[data-col="odometer"] { white-space: nowrap; min-width: clamp(90px, 10vw, 140px); }
+        td[data-col="sold_price"] { white-space: nowrap; min-width: clamp(100px, 10vw, 160px); }
+        td[data-col="sold_date"] { white-space: nowrap; min-width: clamp(110px, 11vw, 180px); }
+        td[data-col="buyer_number"], td[data-col="state"] { white-space: nowrap; }
       `}</style>
-    </>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: any }) {
+  return (
+    <label className="flex flex-col gap-1 text-sm">
+      <span className="text-gray-600 dark:text-gray-300">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Select({
+  value,
+  onChange,
+  options,
+  loading,
+}: {
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  options: string[];
+  loading?: boolean;
+}) {
+  return (
+    <select className="input" value={value} onChange={onChange} disabled={loading}>
+      <option value="">{loading ? 'Loading…' : 'All'}</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
   );
 }
