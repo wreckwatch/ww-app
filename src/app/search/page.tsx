@@ -473,7 +473,7 @@ export default function SearchPage() {
 
           <div className="overflow-x-auto">
             <table className="w-full text-sm table-auto">
-              <thead className="themable">
+              <thead className="sticky-header">
                 <tr>
                   {DISPLAY.map(({ id, label }) => (
                     <th
@@ -502,7 +502,7 @@ export default function SearchPage() {
                   </tr>
                 )}
                 {rows.map((r) => (
-                  <tr key={r.id} className="border-t themable">
+                  <tr key={r.id} className="border-t row-hover">
                     {DISPLAY.map(({ id }) => (
                       <td key={id} className="px-3 py-2" data-col={id}>
                         {id === 'sold_date' && r.sold_date
@@ -526,7 +526,7 @@ export default function SearchPage() {
       <style jsx global>{`
         :root {
           --accent: #32cd32;               /* lime brand */
-          --bg: #ffffff;
+          --bg: #f7f8fb;                   /* softer app background */
           --fg: #111111;
           --card: #ffffff;
           --border: rgba(0, 0, 0, 0.12);
@@ -544,11 +544,11 @@ export default function SearchPage() {
         }
         html, body { background: var(--bg); color: var(--fg); }
 
-        /* Full width header */
+        /* Full width header with thin brand accent */
         .ww-header {
           width: 100%;
           background: var(--card);
-          border-bottom: 4px solid var(--accent); /* thin brand accent */
+          border-bottom: 4px solid var(--accent);
         }
         .ww-header__inner {
           max-width: min(100vw - 24px, 1600px);
@@ -590,8 +590,19 @@ export default function SearchPage() {
         .border { border-color: var(--border) !important; }
         .border-t { border-top-color: var(--border) !important; }
 
-        thead.themable { background: var(--muted); }
-        tr.themable:hover { background: var(--hover); }
+        /* Sticky table header (no overlap) */
+        table { border-collapse: separate; border-spacing: 0; }
+        thead.sticky-header th {
+          position: sticky;
+          top: 0;                 /* sticks to the top of the table scroller */
+          z-index: 2;
+          background: var(--card);
+          border-bottom: 1px solid var(--border);
+          box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0,0,0,0.04);
+        }
+
+        /* Row hover */
+        .row-hover:hover { background: var(--hover); }
 
         /* Responsive, single-line key columns */
         td[data-col="vin"] .vin {
