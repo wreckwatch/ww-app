@@ -8,7 +8,6 @@ type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
 const TABLE = 'vehicles';
 
-/** Locked result columns (order + labels) */
 const DISPLAY = [
   { id: 'year',          label: 'Year' },
   { id: 'make',          label: 'Make' },
@@ -20,54 +19,43 @@ const DISPLAY = [
   { id: 'incident_type', label: 'Damage' },
   { id: 'sale_status',   label: 'Outcome' },
   { id: 'sold_price',    label: 'Amount' },
-  { id: 'sold_date',     label: 'Date' }, // date-only
+  { id: 'sold_date',     label: 'Date' },
   { id: 'auction_house', label: 'House' },
   { id: 'buyer_number',  label: 'Buyer' },
   { id: 'state',         label: 'State' },
 ] as const;
 
-// Minimal list of columns fetched from DB (include id for stable keys)
-const QUERY_COLUMNS = ['id', ...DISPLAY.map(d => d.id)];
-
-// Columns allowed for sorting (fallback to id if not sortable)
+const QUERY_COLUMNS = ['id', ...DISPLAY.map((d) => d.id)];
 const SORTABLE = new Set<string>([...DISPLAY.map(d => d.id), 'id']);
 
-/** debounce hook */
-function useDebounce<T>(val: T, ms = 400) {
+function useDebounce<T>(val: T, ms = 350) {
   const [v, setV] = useState(val);
-  useEffect(() => {
-    const id = setTimeout(() => setV(val), ms);
-    return () => clearTimeout(id);
-  }, [val, ms]);
+  useEffect(() => { const id = setTimeout(() => setV(val), ms); return () => clearTimeout(id); }, [val, ms]);
   return v;
 }
 
-/** Theme toggle */
-function ThemeToggleButton() {
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
-
+/** Simple dark/light toggle that adds/removes the `dark` class on <html> */
+function ThemeToggle() {
+  const [mode, setMode] = useState<'light' | 'dark'>('light');
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('theme') as 'light' | 'dark' | null;
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const initial = stored ?? (prefersDark ? 'dark' : 'light');
-      setTheme(initial);
-      document.documentElement.classList.toggle('dark', initial === 'dark');
-    } catch {}
-  }, []);
-
-  function toggle() {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
+    const stored = (localStorage.getItem('theme') as 'light' | 'dark' | null);
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const next = stored ?? (prefersDark ? 'dark' : 'light');
+    setMode(next);
     document.documentElement.classList.toggle('dark', next === 'dark');
-    try {
-      localStorage.setItem('theme', next);
-    } catch {}
-  }
-
+  }, []);
+  const toggle = () => {
+    const next = mode === 'dark' ? 'light' : 'dark';
+    setMode(next);
+    document.documentElement.classList.toggle('dark', next === 'dark');
+    localStorage.setItem('theme', next);
+  };
   return (
-    <button className="btn ghost" onClick={toggle} aria-label="Toggle theme">
-      {theme === 'dark' ? '🌙 Dark' : '☀️ Light'}
+    <button
+      onClick={toggle}
+      className="rounded-full border border-black/10 bg-white/70 px-3 py-1 text-sm font-medium text-black shadow-sm hover:bg-white"
+    >
+      {mode === 'dark' ? '🌙 Dark' : '☀️ Light'}
     </button>
   );
 }
@@ -88,7 +76,7 @@ export default function SearchPage() {
     auction_house: '',
     state: '',
   });
-  const debounced = useDebounce(filters, 400);
+  const debounced = useDebounce(filters, 350);
 
   const [rows, setRows] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
@@ -106,16 +94,13 @@ export default function SearchPage() {
   });
   const [optsLoading, setOptsLoading] = useState(false);
 
-  // Sorting/paging
-  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>({
-    column: 'sold_date',
-    direction: 'desc',
-  });
+  // paging/sorting
+  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>({ column: 'sold_date', direction: 'desc' });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // Load dropdown options – uses your RPCs (including distinct_incident_type)
+  // Load distinct dropdown values (RPCs you already created)
   async function loadAllOptions(makeFilter?: string) {
     setOptsLoading(true);
     try {
@@ -133,9 +118,7 @@ export default function SearchPage() {
         supabase.rpc('distinct_sale_status'),
         supabase.rpc('distinct_auction_house'),
         supabase.rpc('distinct_state'),
-        makeFilter
-          ? supabase.rpc('distinct_model', { make_filter: makeFilter })
-          : supabase.rpc('distinct_model'),
+        makeFilter ? supabase.rpc('distinct_model', { make_filter: makeFilter }) : supabase.rpc('distinct_model'),
         supabase.rpc('distinct_incident_type'),
       ]);
 
@@ -153,35 +136,26 @@ export default function SearchPage() {
     }
   }
 
-  useEffect(() => {
-    loadAllOptions();
-  }, []);
+  useEffect(() => { loadAllOptions(); }, []);
 
-  // When make changes, update models list (and reset model if it becomes invalid)
   useEffect(() => {
     (async () => {
-      if (!filters.make) {
-        loadAllOptions(undefined);
-        return;
-      }
+      if (!filters.make) { loadAllOptions(undefined); return; }
       const { data } = await supabase.rpc('distinct_model', { make_filter: filters.make });
       const models = (data ?? []).map((r: any) => r.model);
-      setOpts((o) => ({ ...o, model: models }));
+      setOpts(o => ({ ...o, model: models }));
       if (filters.model && !models.includes(filters.model)) {
-        setFilters((f) => ({ ...f, model: '' }));
+        setFilters(f => ({ ...f, model: '' }));
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.make]);
 
-  // Fetch on changes (debounced)
+  // fetch on changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
 
-  function update(k: keyof typeof filters, v: string) {
-    setPage(1);
-    setFilters((s) => ({ ...s, [k]: v }));
-  }
+  function update(k: keyof typeof filters, v: string) { setPage(1); setFilters(s => ({ ...s, [k]: v })); }
   const onInput = (k: keyof typeof filters) => (e: InputChange) => update(k, e.target.value);
   const onSelect = (k: keyof typeof filters) => (e: SelectChange) => update(k, e.target.value);
 
@@ -189,34 +163,27 @@ export default function SearchPage() {
     setLoading(true);
     setError('');
     try {
-      // Normalise ranges
       let { yearFrom, yearTo, priceMin, priceMax } = debounced;
-      if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) {
-        [yearFrom, yearTo] = [yearTo, yearFrom];
-      }
-      if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) {
-        [priceMin, priceMax] = [priceMax, priceMin];
-      }
+      if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) [yearFrom, yearTo] = [yearTo, yearFrom];
+      if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) [priceMin, priceMax] = [priceMax, priceMin];
 
       let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), { count: 'exact' });
-      const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax };
 
-      // VIN exact (case-insensitive)
-      if (f.vin.trim()) q = q.ilike('vin', f.vin.trim());
-      // Buyer number exact (case-insensitive)
-      if (f.buyer_no.trim()) q = q.ilike('buyer_number', f.buyer_no.trim());
+      // exact VIN & buyer (case-insensitive)
+      if (debounced.vin.trim()) q = q.ilike('vin', debounced.vin.trim());
+      if (debounced.buyer_no.trim()) q = q.ilike('buyer_number', debounced.buyer_no.trim());
 
-      if (f.make) q = q.eq('make', f.make);
-      if (f.model) q = q.eq('model', f.model);
-      if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
-      if (f.yearTo) q = q.lte('year', Number(f.yearTo));
-      if (f.wovr_status) q = q.eq('wovr_status', f.wovr_status);
-      if (f.sale_status) q = q.eq('sale_status', f.sale_status);
-      if (f.incident_type) q = q.eq('incident_type', f.incident_type);
-      if (f.priceMin) q = q.gte('sold_price', Number(f.priceMin));
-      if (f.priceMax) q = q.lte('sold_price', Number(f.priceMax));
-      if (f.auction_house) q = q.eq('auction_house', f.auction_house);
-      if (f.state) q = q.eq('state', f.state);
+      if (debounced.make) q = q.eq('make', debounced.make);
+      if (debounced.model) q = q.eq('model', debounced.model);
+      if (yearFrom) q = q.gte('year', Number(yearFrom));
+      if (yearTo) q = q.lte('year', Number(yearTo));
+      if (debounced.wovr_status) q = q.eq('wovr_status', debounced.wovr_status);
+      if (debounced.sale_status) q = q.eq('sale_status', debounced.sale_status);
+      if (debounced.incident_type) q = q.eq('incident_type', debounced.incident_type);
+      if (priceMin) q = q.gte('sold_price', Number(priceMin));
+      if (priceMax) q = q.lte('sold_price', Number(priceMax));
+      if (debounced.auction_house) q = q.eq('auction_house', debounced.auction_house);
+      if (debounced.state) q = q.eq('state', debounced.state);
 
       const sortCol = SORTABLE.has(sort.column) ? sort.column : 'id';
       q = q.order(sortCol, { ascending: sort.direction === 'asc' });
@@ -267,145 +234,88 @@ export default function SearchPage() {
 
   return (
     <>
-      {/* Brand bar */}
-      <header className="brand-bar">
-        <div className="wrap">
-          <div className="logo">WreckWatch</div>
-          <nav className="nav">
-            <a className="nav-link active">Search</a>
-          </nav>
-          <div className="right">
-            <ThemeToggleButton />
+      {/* Brand Bar */}
+      <header className="w-full bg-[#32CD32]">
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between px-4">
+          <div className="flex items-center gap-2 font-extrabold tracking-tight text-black">
+            WreckWatch
+            <span className="rounded-md bg-black/10 px-2 py-0.5 text-xs font-semibold">Search</span>
           </div>
+          <ThemeToggle />
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
-        {/* Filters */}
-        <div className="card mb-6">
-          <div className="card-title">Filters</div>
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+      <main className="mx-auto max-w-[1600px] px-4 py-6">
+        {/* Filter card */}
+        <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 md:p-6">
+          <h2 className="mb-3 text-sm font-semibold text-neutral-700 dark:text-neutral-200">Filters</h2>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-4">
             <Field label="VIN (exact)">
-              <input
-                className="input"
-                value={filters.vin}
-                onChange={onInput('vin')}
-                placeholder="e.g. MR0FZ22G401062065"
-              />
+              <input className="input" value={filters.vin} onChange={onInput('vin')} placeholder="e.g. MR0FZ22G401062065" />
             </Field>
-
             <Field label="Buyer number (exact)">
-              <input
-                className="input"
-                value={filters.buyer_no}
-                onChange={onInput('buyer_no')}
-                placeholder="e.g. B12345"
-              />
+              <input className="input" value={filters.buyer_no} onChange={onInput('buyer_no')} placeholder="e.g. B12345" />
             </Field>
-
             <Field label="Make">
-              <Select
-                value={filters.make}
-                onChange={onSelect('make')}
-                options={opts.make}
-                loading={optsLoading}
-              />
+              <Select value={filters.make} onChange={onSelect('make')} options={opts.make} loading={optsLoading} />
             </Field>
-
             <Field label="Model">
-              <Select
-                value={filters.model}
-                onChange={onSelect('model')}
-                options={opts.model}
-                loading={optsLoading}
-              />
+              <Select value={filters.model} onChange={onSelect('model')} options={opts.model} loading={optsLoading} />
             </Field>
-
             <Field label="Year (From)">
-              <input className="input" type="number" value={filters.yearFrom} onChange={onInput('yearFrom')} />
+              <input type="number" className="input" value={filters.yearFrom} onChange={onInput('yearFrom')} />
             </Field>
-
             <Field label="Year (To)">
-              <input className="input" type="number" value={filters.yearTo} onChange={onInput('yearTo')} />
+              <input type="number" className="input" value={filters.yearTo} onChange={onInput('yearTo')} />
             </Field>
-
             <Field label="WOVR Status">
-              <Select
-                value={filters.wovr_status}
-                onChange={onSelect('wovr_status')}
-                options={opts.wovr_status}
-                loading={optsLoading}
-              />
+              <Select value={filters.wovr_status} onChange={onSelect('wovr_status')} options={opts.wovr_status} loading={optsLoading} />
             </Field>
-
             <Field label="Sale Status">
-              <Select
-                value={filters.sale_status}
-                onChange={onSelect('sale_status')}
-                options={opts.sale_status}
-                loading={optsLoading}
-              />
+              <Select value={filters.sale_status} onChange={onSelect('sale_status')} options={opts.sale_status} loading={optsLoading} />
             </Field>
-
             <Field label="Damage">
-              <Select
-                value={filters.incident_type}
-                onChange={onSelect('incident_type')}
-                options={opts.incident_type}
-                loading={optsLoading}
-              />
+              <Select value={filters.incident_type} onChange={onSelect('incident_type')} options={opts.incident_type} loading={optsLoading} />
             </Field>
-
             <Field label="Price Min">
-              <input className="input" type="number" value={filters.priceMin} onChange={onInput('priceMin')} />
+              <input type="number" className="input" value={filters.priceMin} onChange={onInput('priceMin')} />
             </Field>
-
             <Field label="Price Max">
-              <input className="input" type="number" value={filters.priceMax} onChange={onInput('priceMax')} />
+              <input type="number" className="input" value={filters.priceMax} onChange={onInput('priceMax')} />
             </Field>
-
             <Field label="Auction House">
-              <Select
-                value={filters.auction_house}
-                onChange={onSelect('auction_house')}
-                options={opts.auction_house}
-                loading={optsLoading}
-              />
+              <Select value={filters.auction_house} onChange={onSelect('auction_house')} options={opts.auction_house} loading={optsLoading} />
             </Field>
-
             <Field label="State">
-              <Select
-                value={filters.state}
-                onChange={onSelect('state')}
-                options={opts.state}
-                loading={optsLoading}
-              />
+              <Select value={filters.state} onChange={onSelect('state')} options={opts.state} loading={optsLoading} />
             </Field>
 
             <div className="flex items-end gap-2">
               <button
-                className="btn primary"
-                onClick={() => {
-                  setPage(1);
-                  fetchData();
-                }}
+                className="h-10 rounded-lg bg-[#32CD32] px-4 font-semibold text-black shadow-sm ring-offset-0 hover:bg-[#28ad28]"
+                onClick={() => { setPage(1); fetchData(); }}
                 disabled={loading}
               >
                 {loading ? 'Loading…' : 'Search'}
               </button>
-              <button className="btn ghost" onClick={clearFilters} disabled={loading}>
+              <button
+                className="h-10 rounded-lg border border-gray-300 bg-white px-4 text-gray-700 hover:bg-gray-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                onClick={clearFilters}
+                disabled={loading}
+              >
                 Clear
               </button>
             </div>
           </div>
-        </div>
+        </section>
 
         {/* Results */}
-        <div className="card">
-          <div className="card-header">
-            <div className="text-sm">
+        <section className="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 text-sm dark:border-neutral-800">
+            <div>
               Results{' '}
-              <span className="count-chip">
+              <span className="ml-2 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs dark:border-neutral-700 dark:bg-neutral-800">
                 {total.toLocaleString()} items
               </span>
             </div>
@@ -415,41 +325,30 @@ export default function SearchPage() {
                 value={String(pageSize)}
                 onChange={(e: SelectChange) => setPageSize(Number(e.target.value))}
               >
-                {[10, 25, 50, 100].map((n) => (
-                  <option key={n} value={String(n)}>
-                    {n} / page
-                  </option>
-                ))}
+                {[10, 25, 50, 100].map((n) => <option key={n} value={String(n)}>{n} / page</option>)}
               </select>
-              <button className="btn ghost" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-                Prev
-              </button>
-              <div className="text-sm tabular-nums">
-                {page} / {totalPages}
-              </div>
-              <button className="btn ghost" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-                Next
-              </button>
+              <button className="btn-ghost" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>Prev</button>
+              <div className="tabular-nums text-sm">{page} / {Math.max(1, totalPages)}</div>
+              <button className="btn-ghost" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next</button>
             </div>
           </div>
 
-          {error && <div className="p-4 text-red-500 text-sm">{error}</div>}
+          {error && <div className="px-4 py-3 text-sm text-red-500">{error}</div>}
 
-          {/* Sticky header inside scroll area */}
-          <div className="table-wrap">
-            <table className="w-full text-sm table-auto">
-              <thead className="sticky-head">
-                <tr>
+          <div className="max-h-[70vh] overflow-auto">
+            <table className="w-full table-auto text-sm">
+              <thead className="sticky top-0 z-10 bg-white shadow-sm dark:bg-neutral-900">
+                <tr className="text-left">
                   {DISPLAY.map(({ id, label }) => (
                     <th
                       key={id}
                       onClick={() => toggleSort(id)}
-                      className="px-3 py-2 text-left cursor-pointer"
+                      className="cursor-pointer px-3 py-2"
                     >
                       <div className="inline-flex items-center gap-2">
-                        <span>{label}</span>
+                        <span className="font-medium">{label}</span>
                         {sort.column === id && (
-                          <span className="sort-ind">{sort.direction}</span>
+                          <span className="text-xs uppercase text-gray-500">{sort.direction}</span>
                         )}
                       </div>
                     </th>
@@ -459,21 +358,26 @@ export default function SearchPage() {
               <tbody>
                 {rows.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={DISPLAY.length} className="p-8 text-center text-gray-400">
-                      No results.
-                    </td>
+                    <td colSpan={DISPLAY.length} className="px-3 py-8 text-center text-gray-400">No results.</td>
                   </tr>
                 )}
                 {rows.map((r, i) => (
-                  <tr key={r.id} className={i % 2 ? 'row alt' : 'row'}>
+                  <tr key={r.id} className="odd:bg-gray-50 hover:bg-gray-100 dark:odd:bg-neutral-900/50 dark:hover:bg-neutral-800/70">
                     {DISPLAY.map(({ id }) => (
-                      <td key={id} className="px-3 py-2" data-col={id}>
+                      <td
+                        key={id}
+                        className={[
+                          'px-3 py-2 align-top',
+                          id === 'vin' ? 'whitespace-nowrap min-w-[180px] md:min-w-[240px] lg:min-w-[320px] font-mono text-xs' : '',
+                          id === 'sub_model' ? 'whitespace-nowrap min-w-[160px] lg:min-w-[280px]' : '',
+                          id === 'sold_price' ? 'whitespace-nowrap min-w-[110px]' : '',
+                          id === 'sold_date' ? 'whitespace-nowrap min-w-[110px]' : '',
+                        ].join(' ')}
+                      >
                         {id === 'sold_date' && r.sold_date
-                          ? new Date(r.sold_date).toLocaleDateString() // date only
+                          ? new Date(r.sold_date).toLocaleDateString()
                           : id === 'sold_price' && r.sold_price != null
                           ? `$${Number(r.sold_price).toLocaleString()}`
-                          : id === 'vin'
-                          ? <span className="vin">{r[id]}</span>
                           : (r[id] ?? '—')}
                       </td>
                     ))}
@@ -482,189 +386,42 @@ export default function SearchPage() {
               </tbody>
             </table>
           </div>
-        </div>
-
-        {/* Page styles */}
-        <style jsx global>{`
-          :root {
-            --accent: #32CD32;      /* lime green */
-            --accent-700: #28ad28;  /* darker hover */
-            --bg: #ffffff;
-            --fg: #111111;
-            --card: #ffffff;
-            --border: rgba(0, 0, 0, 0.12);
-            --muted: rgba(0, 0, 0, 0.04);
-            --hover: rgba(0, 0, 0, 0.05);
-            --shadow: 0 2px 8px rgba(0,0,0,0.06);
-          }
-          .dark {
-            --accent: #38e038;
-            --accent-700: #22c122;
-            --bg: #0c0d10;
-            --fg: #f3f4f6;
-            --card: #111317;
-            --border: rgba(255, 255, 255, 0.16);
-            --muted: rgba(255, 255, 255, 0.06);
-            --hover: rgba(255, 255, 255, 0.06);
-            --shadow: 0 2px 10px rgba(0,0,0,0.35);
-          }
-          html, body { background: var(--bg); color: var(--fg); }
-
-          .brand-bar {
-            background: var(--accent);
-            color: #0b1208;
-            border-bottom: 1px solid rgba(0,0,0,.08);
-          }
-          .brand-bar .wrap {
-            max-width: min(100vw - 24px, 1600px);
-            margin: 0 auto;
-            height: 56px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 16px;
-          }
-          .brand-bar .logo {
-            font-weight: 800;
-            letter-spacing: 0.3px;
-          }
-          .nav { display: flex; gap: 16px; }
-          .nav-link { font-weight: 600; opacity: .85; }
-          .nav-link.active { opacity: 1; text-decoration: underline; text-underline-offset: 4px; }
-
-          .card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            box-shadow: var(--shadow);
-          }
-          .card-title {
-            font-weight: 700;
-            padding: 14px 16px 6px;
-            opacity: .85;
-          }
-          .card-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--border);
-          }
-
-          .input {
-            height: 40px;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 0 10px;
-            background: var(--card);
-            color: var(--fg);
-            outline: none;
-            transition: box-shadow .15s ease, border-color .15s ease;
-          }
-          .input:focus {
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
-          }
-
-          .btn {
-            height: 38px;
-            padding: 0 12px;
-            border-radius: 10px;
-            border: 1px solid var(--border);
-            background: var(--card);
-            color: var(--fg);
-            transition: background .15s ease, transform .05s ease, border-color .15s ease;
-          }
-          .btn:active { transform: translateY(1px); }
-          .btn.ghost:hover { background: var(--hover); }
-          .btn.primary {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: #071106;
-            font-weight: 700;
-          }
-          .btn.primary:hover { background: var(--accent-700); border-color: var(--accent-700); }
-
-          .count-chip {
-            margin-left: 8px;
-            padding: 2px 8px;
-            border-radius: 999px;
-            border: 1px solid var(--border);
-            background: var(--muted);
-          }
-
-          /* table */
-          .table-wrap {
-            max-height: 70vh;
-            overflow: auto;
-          }
-          .sticky-head th {
-            position: sticky;
-            top: 0;              /* sticks inside the scroll area */
-            z-index: 1;
-            background: var(--card);
-            border-bottom: 1px solid var(--border);
-          }
-          .sort-ind {
-            text-transform: uppercase;
-            font-size: 11px;
-            color: #6b7280;
-          }
-
-          /* zebra & hover */
-          .row { border-top: 1px solid var(--border); }
-          .row.alt { background: var(--muted); }
-          .row:hover { background: var(--hover); }
-
-          /* Responsive, single-line key columns */
-          td[data-col="vin"] .vin {
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-              "Liberation Mono", "Courier New", monospace;
-            font-size: 12px;
-            white-space: nowrap;
-          }
-          /* clamp(min, fluid, max) so widths adapt to user resolution */
-          td[data-col="vin"] { white-space: nowrap; min-width: clamp(180px, 22vw, 360px); }
-          td[data-col="sub_model"] { white-space: nowrap; min-width: clamp(140px, 16vw, 320px); }
-          td[data-col="auction_house"] { white-space: nowrap; min-width: clamp(100px, 12vw, 220px); }
-          td[data-col="odometer"] { white-space: nowrap; min-width: clamp(90px, 10vw, 140px); }
-          td[data-col="sold_price"] { white-space: nowrap; min-width: clamp(100px, 10vw, 160px); }
-          td[data-col="sold_date"] { white-space: nowrap; min-width: clamp(110px, 11vw, 180px); }
-          td[data-col="buyer_number"], td[data-col="state"] { white-space: nowrap; }
-        `}</style>
+        </section>
       </main>
+
+      {/* tiny utility styles */}
+      <style jsx>{`
+        .input {
+          @apply h-10 rounded-lg border border-gray-300 bg-white px-3 text-[0.95rem] outline-none transition
+                 focus:border-[#32CD32] focus:ring-2 focus:ring-[#32CD32]/30
+                 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100;
+        }
+        .btn-ghost {
+          @apply h-10 rounded-lg border border-gray-300 bg-white px-3 text-gray-700 hover:bg-gray-50
+                 disabled:opacity-50 disabled:cursor-not-allowed
+                 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800;
+        }
+      `}</style>
     </>
   );
 }
 
-function Field({ label, children }: { label: string; children: any }) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="flex flex-col gap-1 text-sm">
-      <span className="text-gray-600 dark:text-gray-300">{label}</span>
+      <span className="text-neutral-600 dark:text-neutral-300">{label}</span>
       {children}
     </label>
   );
 }
 
 function Select({
-  value,
-  onChange,
-  options,
-  loading,
-}: {
-  value: string;
-  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-  options: string[];
-  loading?: boolean;
-}) {
+  value, onChange, options, loading,
+}: { value: string; onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void; options: string[]; loading?: boolean }) {
   return (
     <select className="input" value={value} onChange={onChange} disabled={loading}>
       <option value="">{loading ? 'Loading…' : 'All'}</option>
-      {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
-        </option>
-      ))}
+      {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
   );
 }
