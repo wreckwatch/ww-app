@@ -8,7 +8,6 @@ type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
 const TABLE = 'vehicles';
 
-/** Locked result columns (order + labels) */
 const DISPLAY = [
   { id: 'year',          label: 'Year' },
   { id: 'make',          label: 'Make' },
@@ -26,13 +25,9 @@ const DISPLAY = [
   { id: 'state',         label: 'State' },
 ] as const;
 
-// Minimal list of columns fetched from DB (include id for stable keys)
 const QUERY_COLUMNS = ['id', ...DISPLAY.map(d => d.id)];
-
-// Columns allowed for sorting (fallback to id if not sortable)
 const SORTABLE = new Set<string>([...DISPLAY.map(d => d.id), 'id']);
 
-/** debounce hook */
 function useDebounce<T>(val: T, ms = 400) {
   const [v, setV] = useState(val);
   useEffect(() => {
@@ -42,7 +37,6 @@ function useDebounce<T>(val: T, ms = 400) {
   return v;
 }
 
-/** Theme toggle */
 function ThemeToggleButton() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
@@ -60,9 +54,7 @@ function ThemeToggleButton() {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
     document.documentElement.classList.toggle('dark', next === 'dark');
-    try {
-      localStorage.setItem('theme', next);
-    } catch {}
+    try { localStorage.setItem('theme', next); } catch {}
   }
 
   return (
@@ -106,7 +98,6 @@ export default function SearchPage() {
   });
   const [optsLoading, setOptsLoading] = useState(false);
 
-  // Sorting/paging
   const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>({
     column: 'sold_date',
     direction: 'desc',
@@ -115,27 +106,19 @@ export default function SearchPage() {
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // Load dropdown options – uses your RPCs (including distinct_incident_type)
   async function loadAllOptions(makeFilter?: string) {
     setOptsLoading(true);
     try {
       const [
-        makeRes,
-        wovrRes,
-        saleRes,
-        houseRes,
-        stateRes,
-        modelRes,
-        damageRes,
+        makeRes, wovrRes, saleRes, houseRes, stateRes, modelRes, damageRes,
       ] = await Promise.all([
         supabase.rpc('distinct_make'),
         supabase.rpc('distinct_wovr_status'),
         supabase.rpc('distinct_sale_status'),
         supabase.rpc('distinct_auction_house'),
         supabase.rpc('distinct_state'),
-        makeFilter
-          ? supabase.rpc('distinct_model', { make_filter: makeFilter })
-          : supabase.rpc('distinct_model'),
+        makeFilter ? supabase.rpc('distinct_model', { make_filter: makeFilter })
+                   : supabase.rpc('distinct_model'),
         supabase.rpc('distinct_incident_type'),
       ]);
 
@@ -153,20 +136,12 @@ export default function SearchPage() {
     }
   }
 
-  useEffect(() => {
-    loadAllOptions();
-  }, []);
+  useEffect(() => { loadAllOptions(); }, []);
 
-  // When make changes, update models list (and reset model if it becomes invalid)
   useEffect(() => {
     (async () => {
-      if (!filters.make) {
-        loadAllOptions(undefined);
-        return;
-      }
-      const { data } = await supabase.rpc('distinct_model', {
-        make_filter: filters.make,
-      });
+      if (!filters.make) { loadAllOptions(undefined); return; }
+      const { data } = await supabase.rpc('distinct_model', { make_filter: filters.make });
       const models = (data ?? []).map((r: any) => r.model);
       setOpts((o) => ({ ...o, model: models }));
       if (filters.model && !models.includes(filters.model)) {
@@ -176,56 +151,40 @@ export default function SearchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.make]);
 
-  // Fetch on changes (debounced)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    fetchData();
-  }, [debounced, sort, page, pageSize]);
+  useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
 
   function update(k: keyof typeof filters, v: string) {
     setPage(1);
     setFilters((s) => ({ ...s, [k]: v }));
   }
-  const onInput = (k: keyof typeof filters) => (e: InputChange) =>
-    update(k, e.target.value);
-  const onSelect = (k: keyof typeof filters) => (e: SelectChange) =>
-    update(k, e.target.value);
+  const onInput = (k: keyof typeof filters) => (e: InputChange) => update(k, e.target.value);
+  const onSelect = (k: keyof typeof filters) => (e: SelectChange) => update(k, e.target.value);
 
   async function fetchData() {
     setLoading(true);
     setError('');
     try {
-      // Normalise ranges
       let { yearFrom, yearTo, priceMin, priceMax } = debounced;
-      if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) {
-        [yearFrom, yearTo] = [yearTo, yearFrom];
-      }
-      if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) {
-        [priceMin, priceMax] = [priceMax, priceMin];
-      }
+      if (yearFrom && yearTo && +yearFrom > +yearTo) [yearFrom, yearTo] = [yearTo, yearFrom];
+      if (priceMin && priceMax && +priceMin > +priceMax) [priceMin, priceMax] = [priceMax, priceMin];
 
-      let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), {
-        count: 'exact',
-      });
+      let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), { count: 'exact' });
 
       const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax };
-
-      // VIN exact (case-insensitive)
-      if (f.vin.trim()) q = q.ilike('vin', f.vin.trim());
-      // Buyer number exact (case-insensitive)
-      if (f.buyer_no.trim()) q = q.ilike('buyer_number', f.buyer_no.trim());
-
-      if (f.make) q = q.eq('make', f.make);
-      if (f.model) q = q.eq('model', f.model);
-      if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
-      if (f.yearTo) q = q.lte('year', Number(f.yearTo));
-      if (f.wovr_status) q = q.eq('wovr_status', f.wovr_status);
-      if (f.sale_status) q = q.eq('sale_status', f.sale_status);
-      if (f.incident_type) q = q.eq('incident_type', f.incident_type);
-      if (f.priceMin) q = q.gte('sold_price', Number(f.priceMin));
-      if (f.priceMax) q = q.lte('sold_price', Number(f.priceMax));
-      if (f.auction_house) q = q.eq('auction_house', f.auction_house);
-      if (f.state) q = q.eq('state', f.state);
+      if (f.vin.trim())       q = q.ilike('vin', f.vin.trim());
+      if (f.buyer_no.trim())  q = q.ilike('buyer_number', f.buyer_no.trim());
+      if (f.make)             q = q.eq('make', f.make);
+      if (f.model)            q = q.eq('model', f.model);
+      if (f.yearFrom)         q = q.gte('year', +f.yearFrom);
+      if (f.yearTo)           q = q.lte('year', +f.yearTo);
+      if (f.wovr_status)      q = q.eq('wovr_status', f.wovr_status);
+      if (f.sale_status)      q = q.eq('sale_status', f.sale_status);
+      if (f.incident_type)    q = q.eq('incident_type', f.incident_type);
+      if (f.priceMin)         q = q.gte('sold_price', +f.priceMin);
+      if (f.priceMax)         q = q.lte('sold_price', +f.priceMax);
+      if (f.auction_house)    q = q.eq('auction_house', f.auction_house);
+      if (f.state)            q = q.eq('state', f.state);
 
       const sortCol = SORTABLE.has(sort.column) ? sort.column : 'id';
       q = q.order(sortCol, { ascending: sort.direction === 'asc' });
@@ -257,19 +216,9 @@ export default function SearchPage() {
 
   function clearFilters() {
     setFilters({
-      vin: '',
-      buyer_no: '',
-      make: '',
-      model: '',
-      yearFrom: '',
-      yearTo: '',
-      wovr_status: '',
-      sale_status: '',
-      incident_type: '',
-      priceMin: '',
-      priceMax: '',
-      auction_house: '',
-      state: '',
+      vin: '', buyer_no: '', make: '', model: '',
+      yearFrom: '', yearTo: '', wovr_status: '', sale_status: '',
+      incident_type: '', priceMin: '', priceMax: '', auction_house: '', state: '',
     });
     setPage(1);
   }
@@ -286,8 +235,8 @@ export default function SearchPage() {
 
       {/* Page container */}
       <div className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
-        {/* Filters */}
-        <div className="rounded-lg border p-4 mb-6 bg-[var(--card)]">
+        {/* Filters (raised z-index; creates stacking context above results) */}
+        <div className="relative z-20 rounded-lg border p-4 mb-6 bg-[var(--card)]">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <Field label="VIN (exact)">
               <input
@@ -413,10 +362,7 @@ export default function SearchPage() {
             <div className="flex items-end gap-2">
               <button
                 className="btn btn-accent"
-                onClick={() => {
-                  setPage(1);
-                  fetchData();
-                }}
+                onClick={() => { setPage(1); fetchData(); }}
                 disabled={loading}
               >
                 {loading ? 'Loading…' : 'Search'}
@@ -428,8 +374,8 @@ export default function SearchPage() {
           </div>
         </div>
 
-        {/* Results */}
-        <div className="relative z-0 rounded-lg border p-4 mb-6 bg-[var(--card)] ww-results-card">
+        {/* Results (lower z-index) */}
+        <div className="relative z-10 rounded-lg border p-4 mb-6 bg-[var(--card)] ww-results-card">
           <div className="flex items-center justify-between p-4 border-b">
             <div className="text-sm">
               Results{' '}
@@ -444,28 +390,12 @@ export default function SearchPage() {
                 onChange={(e: SelectChange) => setPageSize(Number(e.target.value))}
               >
                 {[10, 25, 50, 100].map((n) => (
-                  <option key={n} value={String(n)}>
-                    {n} / page
-                  </option>
+                  <option key={n} value={String(n)}>{n} / page</option>
                 ))}
               </select>
-              <button
-                className="btn"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-              >
-                Prev
-              </button>
-              <div className="text-sm tabular-nums">
-                {page} / {totalPages}
-              </div>
-              <button
-                className="btn"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-              >
-                Next
-              </button>
+              <button className="btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>Prev</button>
+              <div className="text-sm tabular-nums">{page} / {totalPages}</div>
+              <button className="btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next</button>
             </div>
           </div>
 
@@ -496,9 +426,7 @@ export default function SearchPage() {
               <tbody>
                 {rows.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={DISPLAY.length} className="p-8 text-center text-gray-400">
-                      No results.
-                    </td>
+                    <td colSpan={DISPLAY.length} className="p-8 text-center text-gray-400">No results.</td>
                   </tr>
                 )}
                 {rows.map((r) => (
@@ -522,116 +450,82 @@ export default function SearchPage() {
         </div>
       </div>
 
-      {/* Design tokens & component styles */}
+      {/* Styles */}
       <style jsx global>{`
-        /* IMPORTANT: use Tailwind's HSL tokens so body { @apply bg-background } picks this up */
         :root {
-          --accent: #32cd32;                   /* lime brand */
-          --background: 220 20% 97%;           /* soft app canvas */
+          --accent: #32cd32;
+          --background: 220 20% 97%;
           --fg: #111111;
-          --card: #ffffff;                     /* cards stay white */
-          --border: rgba(0, 0, 0, 0.12);
-          --muted: rgba(0, 0, 0, 0.05);
-          --hover: rgba(0, 0, 0, 0.06);
+          --card: #ffffff;
+          --border: rgba(0,0,0,0.12);
+          --muted: rgba(0,0,0,0.05);
+          --hover: rgba(0,0,0,0.06);
         }
         .dark {
           --accent: #34e684;
           --background: 222 47% 7%;
           --fg: #f3f4f6;
           --card: #111317;
-          --border: rgba(255, 255, 255, 0.16);
-          --muted: rgba(255, 255, 255, 0.06);
-          --hover: rgba(255, 255, 255, 0.08);
+          --border: rgba(255,255,255,0.16);
+          --muted: rgba(255,255,255,0.06);
+          --hover: rgba(255,255,255,0.08);
         }
-
-        /* Body picks up the new background via Tailwind's bg-background rule */
         html, body { background: hsl(var(--background)); color: var(--fg); }
 
-        /* Full width header with thin brand accent (full-bleed + sticky) */
         .ww-header {
           background: var(--card);
           border-bottom: 4px solid var(--accent);
-          width: 100vw;
-          margin-left: 50%;
-          transform: translateX(-50%);
-          position: sticky;
-          top: 0;
-          z-index: 50;
+          width: 100vw; margin-left: 50%; transform: translateX(-50%);
+          position: sticky; top: 0; z-index: 50;
           padding-left: env(safe-area-inset-left);
           padding-right: env(safe-area-inset-right);
         }
         .ww-header__inner {
           max-width: min(100vw - 24px, 1600px);
-          margin: 0 auto;
-          padding: 10px 16px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
+          margin: 0 auto; padding: 10px 16px;
+          display: flex; align-items: center; justify-content: space-between;
         }
-        .ww-logo {
-          font-weight: 700;
-          letter-spacing: 0.2px;
-        }
+        .ww-logo { font-weight: 700; letter-spacing: 0.2px; }
 
         .input {
-          height: 38px;
-          border: 1px solid var(--border);
-          border-radius: 10px;
-          padding: 0 10px;
-          background: var(--card);
-          color: var(--fg);
+          height: 38px; border: 1px solid var(--border); border-radius: 10px;
+          padding: 0 10px; background: var(--card); color: var(--fg);
+          position: relative; z-index: 1; /* ensure select sits above its siblings */
         }
         .btn {
-          height: 36px;
-          padding: 0 12px;
-          border-radius: 10px;
-          border: 1px solid var(--border);
-          background: var(--card);
-          color: var(--fg);
+          height: 36px; padding: 0 12px; border-radius: 10px;
+          border: 1px solid var(--border); background: var(--card); color: var(--fg);
           transition: background .15s ease, border-color .15s ease;
         }
         .btn:hover { background: var(--hover); }
         .btn-ghost { background: transparent; }
-        .btn-accent {
-          background: var(--accent);
-          border-color: var(--accent);
-          color: #0a0a0a;
-          font-weight: 600;
-        }
+        .btn-accent { background: var(--accent); border-color: var(--accent); color: #0a0a0a; font-weight: 600; }
 
         .border { border-color: var(--border) !important; }
         .border-t { border-top-color: var(--border) !important; }
 
-        /* Sticky table header (no overlap) */
+        /* Each filter field becomes a stacking context that rises on focus */
+        .ww-field { position: relative; z-index: 0; }
+        .ww-field:focus-within { z-index: 100; }
+
+        /* Sticky table header */
         table { border-collapse: separate; border-spacing: 0; }
         thead.sticky-header th {
-          position: sticky;
-          top: 0;
-          z-index: 2;
-          background: var(--card);
+          position: sticky; top: 0; z-index: 2; background: var(--card);
           border-bottom: 1px solid var(--border);
           box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0,0,0,0.04);
         }
 
-        /* Row hover */
         .row-hover:hover { background: var(--hover); }
 
-        /* Make native <select> dropdowns visible even inside the table scroller */
-        .ww-results-scroll { 
-          overflow-x: auto; 
-          overflow-y: visible; 
-        }
-        .ww-results-card { 
-          overflow: visible; 
-        }
+        /* Allow native dropdowns to render above the results scroller */
+        .ww-results-scroll { overflow-x: auto; overflow-y: visible; }
+        .ww-results-card  { overflow: visible; }
 
-        /* Responsive, single-line key columns */
         td[data-col="vin"] .vin {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-          font-size: 12px;
-          white-space: nowrap;
+          font-size: 12px; white-space: nowrap;
         }
-        /* clamp(min, fluid, max) so widths adapt to user resolution */
         td[data-col="vin"] { white-space: nowrap; min-width: clamp(180px, 22vw, 360px); }
         td[data-col="sub_model"] { white-space: nowrap; min-width: clamp(140px, 16vw, 280px); }
         td[data-col="auction_house"] { white-space: nowrap; min-width: clamp(100px, 12vw, 220px); }
@@ -646,7 +540,7 @@ export default function SearchPage() {
 
 function Field({ label, children }: { label: string; children: any }) {
   return (
-    <label className="flex flex-col gap-1 text-sm">
+    <label className="ww-field flex flex-col gap-1 text-sm">
       <span className="text-gray-600 dark:text-gray-300">{label}</span>
       {children}
     </label>
@@ -668,9 +562,7 @@ function Select({
     <select className="input" value={value} onChange={onChange} disabled={loading}>
       <option value="">{loading ? 'Loading…' : 'All'}</option>
       {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
-        </option>
+        <option key={o} value={o}>{o}</option>
       ))}
     </select>
   );
