@@ -1,51 +1,35 @@
-import { GeistSans } from 'geist/font/sans'
-import ThemeProvider from '@/providers/ThemeProvider'
-import NextTopLoader from 'nextjs-toploader'
-import { Analytics } from '@vercel/analytics/react'
-import './globals.css'
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
-import ReactQueryProvider from '@/providers/ReactQueryProvider'
-
-const defaultUrl = process.env.VERCEL_URL
-  ? `https://${process.env.VERCEL_URL}`
-  : 'http://localhost:3000'
+import './globals.css';
+import TopBar from '@/components/TopBar';
 
 export const metadata = {
-  metadataBase: new URL(defaultUrl),
-  title: 'Next.js and Supabase Starter Kit',
-  description: 'The fastest way to build apps with Next.js and Supabase',
-}
+  title: 'WreckWatch',
+  description: 'Search auction records',
+};
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html
-      lang="en"
-      className={GeistSans.className}
-      style={{ colorScheme: 'dark' }}
-      suppressHydrationWarning
-    >
-      <body className="bg-background text-foreground">
-        <NextTopLoader showSpinner={false} height={2} color="#2acf80" />
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="dark"
-          enableSystem
-          disableTransitionOnChange
-        >
-          <ReactQueryProvider>
-            <main className="flex min-h-screen flex-col items-center">
-              {children}
-              <Analytics />{' '}
-              {/* ^^ remove this if you are not deploying to vercel. See more at https://vercel.com/docs/analytics  */}
-            </main>
-            <ReactQueryDevtools initialIsOpen={false} />
-          </ReactQueryProvider>
-        </ThemeProvider>
+    <html lang="en" suppressHydrationWarning>
+      {/* Set shared CSS variables here so every page can use them */}
+      <body
+        style={
+          {
+            // height of the top bar (also used by sticky table headers)
+            ['--appbar-h' as any]: '64px',
+            // brand color for the bar
+            ['--brand' as any]: '#32CD32',
+            // optional UI fallbacks if you want
+            ['--bg' as any]: '#0e0f12',
+            ['--fg' as any]: '#e5e7eb',
+            ['--card' as any]: '#111318',
+            ['--border' as any]: '#1f232a',
+          } as React.CSSProperties
+        }
+        className="bg-[var(--bg)] text-[var(--fg)]"
+      >
+        <TopBar />
+        {/* Push page content below the fixed bar */}
+        <main className="pt-[var(--appbar-h)]">{children}</main>
       </body>
     </html>
-  )
+  );
 }
