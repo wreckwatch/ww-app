@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import Image from 'next/image';
 import { supabase } from '@/lib/supabaseClient';
 
 type InputChange = React.ChangeEvent<HTMLInputElement>;
@@ -269,17 +268,7 @@ export default function SearchPage() {
       {/* Full-width brand bar with thin accent (full-bleed + sticky) */}
       <header className="ww-header">
         <div className="ww-header__inner">
-          <div className="flex items-center gap-2">
-            {/* Replace text with your logo image */}
-            <Image
-              src="/wreckwatch-logo.png"
-              alt="WreckWatch"
-              width={180}
-              height={40}
-              className="ww-logo-img"
-              priority
-            />
-          </div>
+          <div className="ww-logo">WreckWatch</div>
           <ThemeToggleButton />
         </div>
       </header>
@@ -551,12 +540,18 @@ export default function SearchPage() {
         .ww-header {
           background: var(--card);
           border-bottom: 4px solid var(--accent);
+
+          /* make it span the full viewport even if parent is centered/padded */
           width: 100vw;
           margin-left: 50%;
           transform: translateX(-50%);
+
+          /* keep visible on scroll */
           position: sticky;
           top: 0;
           z-index: 50;
+
+          /* iOS safe-area support */
           padding-left: env(safe-area-inset-left);
           padding-right: env(safe-area-inset-right);
         }
@@ -568,10 +563,13 @@ export default function SearchPage() {
           align-items: center;
           justify-content: space-between;
         }
-        .ww-logo-img {
-          height: 34px;           /* responsive cap for navbar */
-          width: auto;
-          object-fit: contain;
+
+        /* Bigger, bolder brand */
+        .ww-logo {
+          font-weight: 800;
+          font-size: clamp(24px, 2.6vw, 36px);
+          letter-spacing: .2px;
+          line-height: 1.05;
         }
 
         .input {
@@ -581,7 +579,7 @@ export default function SearchPage() {
           padding: 0 10px;
           background: var(--card);
           color: var(--fg);
-          position: relative;
+          position: relative;   /* create new stacking context */
           z-index: 1;
         }
         .btn {
@@ -613,7 +611,7 @@ export default function SearchPage() {
           z-index: 1;
           background: var(--card);
           border-bottom: 1px solid var(--border);
-          box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0, 0, 0, 0.04);
+          box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0,0,0,0.04);
         }
 
         /* Row hover */
@@ -629,6 +627,7 @@ export default function SearchPage() {
           font-size: 12px;
           white-space: nowrap;
         }
+        /* clamp(min, fluid, max) so widths adapt to user resolution */
         td[data-col="vin"] { white-space: nowrap; min-width: clamp(180px, 22vw, 360px); }
         td[data-col="sub_model"] { white-space: nowrap; min-width: clamp(140px, 16vw, 280px); }
         td[data-col="auction_house"] { white-space: nowrap; min-width: clamp(100px, 12vw, 220px); }
@@ -650,7 +649,7 @@ export default function SearchPage() {
           gap: 8px;
           width: 100%;
           position: relative;
-          z-index: 1;
+          z-index: 1; /* above nearby borders, below the actual menu */
         }
         .ww-select-btn:hover { background: var(--hover); }
         .ww-caret {
@@ -662,11 +661,11 @@ export default function SearchPage() {
         .ww-menu {
           position: absolute;
           left: 0; top: 0;
-          z-index: 100000;
+          z-index: 100000; /* above sticky header & table */
           background: var(--card);
           color: var(--fg);
-          border: 1px solid var(--fg);
-          border-radius: 10px;
+          border: 1px solid var(--fg);      /* full clean border */
+          border-radius: 10px;              /* rounded corners intact */
           box-shadow: 0 8px 24px rgba(0,0,0,.12);
           max-height: 280px;
           overflow: auto;
