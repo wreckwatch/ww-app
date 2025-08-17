@@ -21,7 +21,7 @@ const DISPLAY = [
   { id: 'sale_status',   label: 'Outcome' },
   { id: 'sold_price',    label: 'Amount' },
   { id: 'sold_date',     label: 'Date' },
-  { id: 'auction_house', label: 'House' },
+  { id: 'auction_house', label: 'House' },   // 12th column (used in CSS below)
   { id: 'buyer_number',  label: 'Buyer' },
   { id: 'state',         label: 'State' },
 ] as const;
@@ -42,7 +42,7 @@ function useDebounce<T>(val: T, ms = 400) {
   return v;
 }
 
-/** Theme toggle (optional; kept from your working version) */
+/** Theme toggle */
 function ThemeToggleButton() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
@@ -279,7 +279,9 @@ export default function SearchPage() {
       {/* Full-width brand bar with thin accent */}
       <header className="ww-header">
         <div className="ww-header__inner">
-          <div className="ww-logo">WreckWatch</div>
+          <div className="ww-logo">
+            <strong>WRECKWATCH</strong>
+          </div>
           <ThemeToggleButton />
         </div>
       </header>
@@ -429,7 +431,7 @@ export default function SearchPage() {
         </div>
 
         {/* Results */}
-        <div className="rounded-lg border p-4 mb-6 bg-[var(--card)]">
+        <div className="rounded-lg border bg-[var(--card)]">
           <div className="flex items-center justify-between p-4 border-b">
             <div className="text-sm">
               Results{' '}
@@ -503,26 +505,37 @@ export default function SearchPage() {
                 )}
                 {rows.map((r) => (
                   <tr key={r.id} className="border-t row-hover">
-                    {DISPLAY.map(({ id }) => (
-                      <td key={id} className="px-3 py-2" data-col={id}>
-                        {id === 'sold_date' && r.sold_date ? (
-                          new Date(r.sold_date).toLocaleDateString()
-                        ) : id === 'sold_price' && r.sold_price != null ? (
-                          `$${Number(r.sold_price).toLocaleString()}`
-                        ) : id === 'vin' ? (
-                          <span className="vin">{r[id]}</span>
-                        ) : id === 'auction_house' &&
-                          typeof r[id] === 'string' &&
-                          r[id].toLowerCase() === 'pickles' ? (
-                          <span className="brand-chip" title="Pickles">
-                            <img src="/pickles.png" alt="" aria-hidden="true" />
-                            <span className="sr-only">Pickles</span>
-                          </span>
-                        ) : (
-                          r[id] ?? '—'
-                        )}
-                      </td>
-                    ))}
+                    {DISPLAY.map(({ id }) => {
+                      let content: React.ReactNode = r[id] ?? '—';
+
+                      if (id === 'sold_date' && r.sold_date) {
+                        content = new Date(r.sold_date).toLocaleDateString();
+                      } else if (id === 'sold_price' && r.sold_price != null) {
+                        content = `$${Number(r.sold_price).toLocaleString()}`;
+                      } else if (id === 'vin') {
+                        content = <span className="vin">{r[id]}</span>;
+                      } else if (id === 'auction_house') {
+                        if (String(r.auction_house).toLowerCase() === 'pickles') {
+                          content = (
+                            <span className="brand-chip" title="Pickles">
+                              <img
+                                src="/picon.png"
+                                alt="Pickles"
+                                width={18}
+                                height={18}
+                                loading="lazy"
+                              />
+                            </span>
+                          );
+                        }
+                      }
+
+                      return (
+                        <td key={id} className="px-3 py-2" data-col={id}>
+                          {content}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -533,7 +546,7 @@ export default function SearchPage() {
 
       {/* Design tokens & component styles */}
       <style jsx global>{`
-        /* Design Tokens */
+        /* Color tokens */
         :root {
           --accent: #32cd32;                   /* lime brand */
           --background: 220 20% 97%;           /* soft app canvas */
@@ -553,7 +566,6 @@ export default function SearchPage() {
           --hover: rgba(255, 255, 255, 0.08);
         }
 
-        /* Body picks up the new background via Tailwind's bg-background rule */
         html, body { background: hsl(var(--background)); color: var(--fg); }
 
         /* Full width header with thin brand accent (full-bleed + sticky) */
@@ -561,7 +573,6 @@ export default function SearchPage() {
           background: var(--card);
           border-bottom: 4px solid var(--accent);
 
-          /* span the full viewport even if parent is centered/padded */
           width: 100vw;
           margin-left: 50%;
           transform: translateX(-50%);
@@ -576,18 +587,18 @@ export default function SearchPage() {
         .ww-header__inner {
           max-width: min(100vw - 24px, 1600px);
           margin: 0 auto;
-          padding: 12px 16px;
+          padding: 10px 16px;
           display: flex;
           align-items: center;
           justify-content: space-between;
         }
-        .ww-logo {
+        .ww-logo strong {
           font-weight: 800;
-          font-size: clamp(20px, 2.1vw, 28px); /* bigger wordmark */
-          letter-spacing: 0.2px;
+          letter-spacing: 0.5px;
+          font-size: clamp(22px, 2.2vw, 28px);
+          line-height: 1.2;
         }
 
-        /* Inputs & buttons (custom primitives) */
         .input {
           height: 38px;
           border: 1px solid var(--border);
@@ -640,21 +651,26 @@ export default function SearchPage() {
         /* clamp(min, fluid, max) so widths adapt to user resolution */
         td[data-col="vin"] { white-space: nowrap; min-width: clamp(180px, 22vw, 360px); }
         td[data-col="sub_model"] { white-space: nowrap; min-width: clamp(140px, 16vw, 280px); }
-        td[data-col="auction_house"] { white-space: nowrap; min-width: clamp(100px, 12vw, 220px); }
         td[data-col="odometer"] { white-space: nowrap; min-width: clamp(90px, 10vw, 140px); }
         td[data-col="sold_price"] { white-space: nowrap; min-width: clamp(100px, 10vw, 160px); }
         td[data-col="sold_date"] { white-space: nowrap; min-width: clamp(110px, 11vw, 180px); }
         td[data-col="buyer_number"], td[data-col="state"] { white-space: nowrap; }
 
-        /* Pickles brand chip */
-        .brand-chip {
-          display: inline-flex;
-          align-items: center;
+        /* Compact icon-only "House" column (12th) */
+        th:nth-child(12),
+        td[data-col="auction_house"] {
+          width: 60px;
+          min-width: 60px;
+          max-width: 60px;
+          text-align: center;
+          padding-left: 0;
+          padding-right: 0;
         }
-        .brand-chip img {
+        td[data-col="auction_house"] .brand-chip img {
           height: 18px;
           width: auto;
           display: block;
+          margin-inline: auto;
         }
       `}</style>
     </div>
