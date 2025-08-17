@@ -463,7 +463,7 @@ export default function SearchPage() {
                   {DISPLAY.map(({ id, label }) => (
                     <th
                       key={id}
-                      data-col={id}                      // <-- added for consistent sizing with TD
+                      data-col={id}
                       onClick={() => toggleSort(id)}
                       className="px-3 py-2 text-left cursor-pointer"
                     >
@@ -491,7 +491,7 @@ export default function SearchPage() {
                   <tr key={r.id} className="border-t row-hover">
                     {DISPLAY.map(({ id }) => (
                       <td key={id} className="px-3 py-2" data-col={id}>
-                        {/* Pickles icon in House column */}
+                        {/* House: Pickles icon */}
                         {id === 'auction_house' ? (
                           r.auction_house === 'Pickles' ? (
                             <img
@@ -502,6 +502,19 @@ export default function SearchPage() {
                               style={{ display: 'block', margin: '0 auto' }}
                             />
                           ) : (r.auction_house ?? '—')
+                        ) : /* Outcome: SOLD badge */ id === 'sale_status' ? (
+                          typeof r.sale_status === 'string' &&
+                          r.sale_status.trim().toUpperCase() === 'SOLD' ? (
+                            <img
+                              src="/soldicon.webp"
+                              alt="Sold"
+                              width={64}
+                              height={28}
+                              style={{ display: 'block', margin: '0 auto' }}
+                            />
+                          ) : (
+                            r.sale_status ?? '—'
+                          )
                         ) : id === 'sold_date' && r.sold_date ? (
                           new Date(r.sold_date).toLocaleDateString()
                         ) : id === 'sold_price' && r.sold_price != null ? (
@@ -618,6 +631,11 @@ export default function SearchPage() {
           width: 56px;
           min-width: 56px;
           max-width: 56px;
+          text-align: center;
+        }
+
+        /* OUTCOME column: center content so the SOLD badge is tidy */
+        td[data-col="sale_status"], th[data-col="sale_status"] {
           text-align: center;
         }
 
