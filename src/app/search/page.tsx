@@ -119,13 +119,7 @@ export default function SearchPage() {
     setOptsLoading(true);
     try {
       const [
-        makeRes,
-        wovrRes,
-        saleRes,
-        houseRes,
-        stateRes,
-        modelRes,
-        damageRes,
+        makeRes, wovrRes, saleRes, houseRes, stateRes, modelRes, damageRes,
       ] = await Promise.all([
         supabase.rpc('distinct_make'),
         supabase.rpc('distinct_wovr_status'),
@@ -443,7 +437,9 @@ export default function SearchPage() {
                 onChange={(e: SelectChange) => setPageSize(Number(e.target.value))}
               >
                 {[10, 25, 50, 100].map((n) => (
-                  <option key={n} value={String(n)}>{n} / page</option>
+                  <option key={n} value={String(n)}>
+                    {n} / page
+                  </option>
                 ))}
               </select>
               <button
@@ -453,7 +449,9 @@ export default function SearchPage() {
               >
                 Prev
               </button>
-              <div className="text-sm tabular-nums">{page} / {totalPages}</div>
+              <div className="text-sm tabular-nums">
+                {page} / {totalPages}
+              </div>
               <button
                 className="btn"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
@@ -521,7 +519,7 @@ export default function SearchPage() {
       <style jsx global>{`
         :root {
           --accent: #32cd32;                   /* lime brand */
-          --background: 220 20% 97%;           /* soft app canvas (#f5f7fb-ish) */
+          --background: 220 20% 97%;           /* soft app canvas */
           --fg: #111111;
           --card: #ffffff;                      /* cards stay white */
           --border: rgba(0, 0, 0, 0.12);
@@ -530,7 +528,7 @@ export default function SearchPage() {
         }
         .dark {
           --accent: #34e684;
-          --background: 222 47% 7%;            /* deep slate for dark canvas */
+          --background: 222 47% 7%;
           --fg: #f3f4f6;
           --card: #111317;
           --border: rgba(255, 255, 255, 0.16);
@@ -563,22 +561,47 @@ export default function SearchPage() {
         }
         .ww-logo { font-weight: 700; letter-spacing: 0.2px; }
 
+        /* Inputs */
         .input {
           height: 38px;
           border: 1px solid var(--border);
-          border-radius: 10px;   /* default for inputs */
+          border-radius: 10px;   /* inputs keep rounded corners */
           padding: 0 10px;
           background: var(--card);
           color: var(--fg);
+          width: 100%;
         }
 
-        /* Make ONLY dropdowns (selects) square so the menu corners match */
-        select.input {
-          border-radius: 0 !important;
-          -webkit-border-radius: 0 !important;
-          -moz-border-radius: 0 !important;
-          background-clip: padding-box;
-          overflow: hidden;
+        /* Select: wrapper draws the border so it never gets clipped */
+        .select-shell {
+          height: 38px;
+          border: 1px solid var(--border);
+          border-radius: 0;              /* square to match native menu */
+          background: var(--card);
+          color: var(--fg);
+          width: 100%;
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
+        .select-native {
+          appearance: none;
+          -webkit-appearance: none;
+          -moz-appearance: none;
+          border: none;
+          outline: none;
+          background: transparent;
+          color: inherit;
+          width: 100%;
+          height: 100%;
+          padding: 0 28px 0 10px;       /* room for caret */
+          font: inherit;
+        }
+        .select-caret {
+          position: absolute;
+          right: 10px;
+          pointer-events: none;
+          opacity: .7;
         }
 
         .btn {
@@ -642,6 +665,7 @@ function Field({ label, children }: { label: string; children: any }) {
   );
 }
 
+/** Native select wrapped in a bordered shell so borders are always perfect */
 function Select({
   value,
   onChange,
@@ -654,13 +678,21 @@ function Select({
   loading?: boolean;
 }) {
   return (
-    <select className="input" value={value} onChange={onChange} disabled={loading}>
-      <option value="">{loading ? 'Loading…' : 'All'}</option>
-      {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
-        </option>
-      ))}
-    </select>
+    <div className="select-shell">
+      <select
+        className="select-native"
+        value={value}
+        onChange={onChange}
+        disabled={loading}
+      >
+        <option value="">{loading ? 'Loading…' : 'All'}</option>
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+      <span className="select-caret">▾</span>
+    </div>
   );
 }
