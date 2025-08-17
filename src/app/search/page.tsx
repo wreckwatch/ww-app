@@ -102,10 +102,9 @@ export default function SearchPage() {
   const [optsLoading, setOptsLoading] = useState(false);
 
   // Sorting/paging
-  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>({
-    column: 'sold_date',
-    direction: 'desc',
-  });
+  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>(
+    { column: 'sold_date', direction: 'desc' }
+  );
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
@@ -259,6 +258,52 @@ export default function SearchPage() {
       state: '',
     });
     setPage(1);
+  }
+
+  // Helper: render a WOVR badge for known statuses
+  function renderWovrBadge(raw: unknown) {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    const key = raw
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    let src = '';
+    let alt = '';
+
+    switch (key) {
+      case 'statutory write off':
+        src = '/staticon.png';
+        alt = 'Statutory Write-off';
+        break;
+      case 'repairable write off':
+        src = '/repairicon.png';
+        alt = 'Repairable Write-off';
+        break;
+      case 'wovr na':
+      case 'wovr n a':
+        src = '/wovrnaicon.png';
+        alt = 'WOVR N/A';
+        break;
+      case 'inspection passed repairable writeoff':
+      case 'inspection passed repairable write off':
+        src = '/inspectedicon.png';
+        alt = 'Inspection Passed Repairable Write-off';
+        break;
+      default:
+        return null;
+    }
+
+    return (
+      <img
+        src={src}
+        alt={alt}
+        width={96}
+        height={28}
+        style={{ display: 'block', margin: '0 auto' }}
+      />
+    );
   }
 
   return (
@@ -515,6 +560,8 @@ export default function SearchPage() {
                           ) : (
                             r.sale_status ?? '—'
                           )
+                        ) : /* WOVR: icon badges */ id === 'wovr_status' ? (
+                          renderWovrBadge(r.wovr_status) ?? (r.wovr_status ?? '—')
                         ) : id === 'sold_date' && r.sold_date ? (
                           new Date(r.sold_date).toLocaleDateString()
                         ) : id === 'sold_price' && r.sold_price != null ? (
@@ -634,8 +681,9 @@ export default function SearchPage() {
           text-align: center;
         }
 
-        /* OUTCOME column: center content so the SOLD badge is tidy */
-        td[data-col="sale_status"], th[data-col="sale_status"] {
+        /* OUTCOME & WOVR: center content so badges are tidy */
+        td[data-col="sale_status"], th[data-col="sale_status"],
+        td[data-col="wovr_status"], th[data-col="wovr_status"] {
           text-align: center;
         }
 
