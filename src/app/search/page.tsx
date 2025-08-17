@@ -25,8 +25,8 @@ const DISPLAY = [
   { id: 'state',         label: 'State' },
 ] as const;
 
-const QUERY_COLUMNS = ['id', ...DISPLAY.map(d => d.id)];
-const SORTABLE = new Set<string>([...DISPLAY.map(d => d.id), 'id']);
+const QUERY_COLUMNS = ['id', ...DISPLAY.map((d) => d.id)];
+const SORTABLE = new Set<string>([...DISPLAY.map((d) => d.id), 'id']);
 
 function useDebounce<T>(val: T, ms = 400) {
   const [v, setV] = useState(val);
@@ -235,8 +235,8 @@ export default function SearchPage() {
 
       {/* Page container */}
       <div className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
-        {/* Filters (raised z-index; creates stacking context above results) */}
-        <div className="relative z-20 rounded-lg border p-4 mb-6 bg-[var(--card)]">
+        {/* Filters (very high z-index while focused; sits above results) */}
+        <div className="relative z-[100] rounded-lg border p-4 mb-6 bg-[var(--card)]">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <Field label="VIN (exact)">
               <input
@@ -374,8 +374,8 @@ export default function SearchPage() {
           </div>
         </div>
 
-        {/* Results (lower z-index) */}
-        <div className="relative z-10 rounded-lg border p-4 mb-6 bg-[var(--card)] ww-results-card">
+        {/* Results (kept at lower z-index) */}
+        <div className="relative z-[1] rounded-lg border p-4 mb-6 bg-[var(--card)] ww-results-card">
           <div className="flex items-center justify-between p-4 border-b">
             <div className="text-sm">
               Results{' '}
@@ -490,7 +490,7 @@ export default function SearchPage() {
         .input {
           height: 38px; border: 1px solid var(--border); border-radius: 10px;
           padding: 0 10px; background: var(--card); color: var(--fg);
-          position: relative; z-index: 1; /* ensure select sits above its siblings */
+          position: relative; z-index: 1; /* give selects their own stacking context */
         }
         .btn {
           height: 36px; padding: 0 12px; border-radius: 10px;
@@ -504,21 +504,22 @@ export default function SearchPage() {
         .border { border-color: var(--border) !important; }
         .border-t { border-top-color: var(--border) !important; }
 
-        /* Each filter field becomes a stacking context that rises on focus */
+        /* Each filter field rises to the very top when focused */
         .ww-field { position: relative; z-index: 0; }
-        .ww-field:focus-within { z-index: 100; }
+        .ww-field:focus-within { z-index: 10000; }
 
-        /* Sticky table header */
+        /* Sticky table header with a *low* z-index so it won't overpaint the popup */
         table { border-collapse: separate; border-spacing: 0; }
         thead.sticky-header th {
-          position: sticky; top: 0; z-index: 2; background: var(--card);
+          position: sticky; top: 0; z-index: 1; /* was 2 — lower so native popup sits above */
+          background: var(--card);
           border-bottom: 1px solid var(--border);
           box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0,0,0,0.04);
         }
 
         .row-hover:hover { background: var(--hover); }
 
-        /* Allow native dropdowns to render above the results scroller */
+        /* Make sure native popups aren't clipped by the results container */
         .ww-results-scroll { overflow-x: auto; overflow-y: visible; }
         .ww-results-card  { overflow: visible; }
 
