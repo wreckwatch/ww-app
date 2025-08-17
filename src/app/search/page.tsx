@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabaseClient';
 
 type InputChange = React.ChangeEvent<HTMLInputElement>;
-type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
 const TABLE = 'vehicles';
 
@@ -27,10 +27,10 @@ const DISPLAY = [
 ] as const;
 
 // Minimal list of columns fetched from DB (include id for stable keys)
-const QUERY_COLUMNS = ['id', ...DISPLAY.map(d => d.id)];
+const QUERY_COLUMNS = ['id', ...DISPLAY.map((d) => d.id)];
 
 // Columns allowed for sorting (fallback to id if not sortable)
-const SORTABLE = new Set<string>([...DISPLAY.map(d => d.id), 'id']);
+const SORTABLE = new Set<string>([...DISPLAY.map((d) => d.id), 'id']);
 
 /** debounce hook */
 function useDebounce<T>(val: T, ms = 400) {
@@ -60,7 +60,9 @@ function ThemeToggleButton() {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
     document.documentElement.classList.toggle('dark', next === 'dark');
-    try { localStorage.setItem('theme', next); } catch {}
+    try {
+      localStorage.setItem('theme', next);
+    } catch {}
   }
 
   return (
@@ -105,10 +107,9 @@ export default function SearchPage() {
   const [optsLoading, setOptsLoading] = useState(false);
 
   // Sorting/paging
-  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>({
-    column: 'sold_date',
-    direction: 'desc',
-  });
+  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>(
+    { column: 'sold_date', direction: 'desc' }
+  );
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
@@ -118,13 +119,7 @@ export default function SearchPage() {
     setOptsLoading(true);
     try {
       const [
-        makeRes,
-        wovrRes,
-        saleRes,
-        houseRes,
-        stateRes,
-        modelRes,
-        damageRes,
+        makeRes, wovrRes, saleRes, houseRes, stateRes, modelRes, damageRes,
       ] = await Promise.all([
         supabase.rpc('distinct_make'),
         supabase.rpc('distinct_wovr_status'),
@@ -151,7 +146,9 @@ export default function SearchPage() {
     }
   }
 
-  useEffect(() => { loadAllOptions(); }, []);
+  useEffect(() => {
+    loadAllOptions();
+  }, []);
 
   // When make changes, update models list (and reset model if it becomes invalid)
   useEffect(() => {
@@ -174,14 +171,16 @@ export default function SearchPage() {
 
   // Fetch on changes (debounced)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
+  useEffect(() => {
+    fetchData();
+  }, [debounced, sort, page, pageSize]);
 
   function update(k: keyof typeof filters, v: string) {
     setPage(1);
     setFilters((s) => ({ ...s, [k]: v }));
   }
   const onInput = (k: keyof typeof filters) => (e: InputChange) => update(k, e.target.value);
-  const onSelect = (k: keyof typeof filters) => (e: SelectChange) => update(k, e.target.value);
+  const onSelect = (k: keyof typeof filters) => (v: string) => update(k, v);
 
   async function fetchData() {
     setLoading(true);
@@ -266,7 +265,7 @@ export default function SearchPage() {
 
   return (
     <div className="min-h-screen">
-      {/* Full-width brand bar with thin accent */}
+      {/* Full-width brand bar with thin accent (full-bleed + sticky) */}
       <header className="ww-header">
         <div className="ww-header__inner">
           <div className="ww-logo">WreckWatch</div>
@@ -276,9 +275,8 @@ export default function SearchPage() {
 
       {/* Page container */}
       <div className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
-
         {/* Filters */}
-        <div className="filters-card rounded-lg border p-4 mb-6 bg-[var(--card)]">
+        <div className="relative z-[100] rounded-lg border p-4 mb-6 bg-[var(--card)]">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <Field label="VIN (exact)">
               <input
@@ -299,7 +297,7 @@ export default function SearchPage() {
             </Field>
 
             <Field label="Make">
-              <Select
+              <SelectMenu
                 value={filters.make}
                 onChange={onSelect('make')}
                 options={opts.make}
@@ -308,7 +306,7 @@ export default function SearchPage() {
             </Field>
 
             <Field label="Model">
-              <Select
+              <SelectMenu
                 value={filters.model}
                 onChange={onSelect('model')}
                 options={opts.model}
@@ -337,7 +335,7 @@ export default function SearchPage() {
             </Field>
 
             <Field label="WOVR Status">
-              <Select
+              <SelectMenu
                 value={filters.wovr_status}
                 onChange={onSelect('wovr_status')}
                 options={opts.wovr_status}
@@ -346,7 +344,7 @@ export default function SearchPage() {
             </Field>
 
             <Field label="Sale Status">
-              <Select
+              <SelectMenu
                 value={filters.sale_status}
                 onChange={onSelect('sale_status')}
                 options={opts.sale_status}
@@ -355,7 +353,7 @@ export default function SearchPage() {
             </Field>
 
             <Field label="Damage">
-              <Select
+              <SelectMenu
                 value={filters.incident_type}
                 onChange={onSelect('incident_type')}
                 options={opts.incident_type}
@@ -384,7 +382,7 @@ export default function SearchPage() {
             </Field>
 
             <Field label="Auction House">
-              <Select
+              <SelectMenu
                 value={filters.auction_house}
                 onChange={onSelect('auction_house')}
                 options={opts.auction_house}
@@ -393,7 +391,7 @@ export default function SearchPage() {
             </Field>
 
             <Field label="State">
-              <Select
+              <SelectMenu
                 value={filters.state}
                 onChange={onSelect('state')}
                 options={opts.state}
@@ -404,7 +402,10 @@ export default function SearchPage() {
             <div className="flex items-end gap-2">
               <button
                 className="btn btn-accent"
-                onClick={() => { setPage(1); fetchData(); }}
+                onClick={() => {
+                  setPage(1);
+                  fetchData();
+                }}
                 disabled={loading}
               >
                 {loading ? 'Loading…' : 'Search'}
@@ -417,7 +418,7 @@ export default function SearchPage() {
         </div>
 
         {/* Results */}
-        <div className="results-card rounded-lg border p-4 mb-6 bg-[var(--card)]">
+        <div className="relative z-[1] rounded-lg border p-4 mb-6 bg-[var(--card)] ww-results-card">
           <div className="flex items-center justify-between p-4 border-b">
             <div className="text-sm">
               Results{' '}
@@ -426,24 +427,41 @@ export default function SearchPage() {
               </span>
             </div>
             <div className="flex items-center gap-2">
+              {/* Keep native here; it’s not near the sticky header */}
               <select
                 className="input w-28"
                 value={String(pageSize)}
-                onChange={(e: SelectChange) => setPageSize(Number(e.target.value))}
+                onChange={(e) => setPageSize(Number(e.target.value))}
               >
                 {[10, 25, 50, 100].map((n) => (
-                  <option key={n} value={String(n)}>{n} / page</option>
+                  <option key={n} value={String(n)}>
+                    {n} / page
+                  </option>
                 ))}
               </select>
-              <button className="btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>Prev</button>
-              <div className="text-sm tabular-nums">{page} / {totalPages}</div>
-              <button className="btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next</button>
+              <button
+                className="btn"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+              >
+                Prev
+              </button>
+              <div className="text-sm tabular-nums">
+                {page} / {totalPages}
+              </div>
+              <button
+                className="btn"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
+                Next
+              </button>
             </div>
           </div>
 
           {error && <div className="p-4 text-red-500 text-sm">{error}</div>}
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto ww-results-scroll">
             <table className="w-full text-sm table-auto">
               <thead className="sticky-header">
                 <tr>
@@ -496,11 +514,12 @@ export default function SearchPage() {
 
       {/* Design tokens & component styles */}
       <style jsx global>{`
+        /* Use Tailwind-like HSL token for page background */
         :root {
-          --accent: #32cd32;
-          --background: 220 20% 97%;
+          --accent: #32cd32;                   /* lime brand */
+          --background: 220 20% 97%;           /* soft app canvas */
           --fg: #111111;
-          --card: #ffffff;
+          --card: #ffffff;                      /* cards stay white */
           --border: rgba(0, 0, 0, 0.12);
           --muted: rgba(0, 0, 0, 0.05);
           --hover: rgba(0, 0, 0, 0.06);
@@ -521,12 +540,18 @@ export default function SearchPage() {
         .ww-header {
           background: var(--card);
           border-bottom: 4px solid var(--accent);
+
+          /* make it span the full viewport even if parent is centered/padded */
           width: 100vw;
           margin-left: 50%;
           transform: translateX(-50%);
+
+          /* keep visible on scroll */
           position: sticky;
           top: 0;
           z-index: 50;
+
+          /* iOS safe-area support */
           padding-left: env(safe-area-inset-left);
           padding-right: env(safe-area-inset-right);
         }
@@ -547,6 +572,8 @@ export default function SearchPage() {
           padding: 0 10px;
           background: var(--card);
           color: var(--fg);
+          position: relative;   /* create new stacking context */
+          z-index: 1;
         }
         .btn {
           height: 36px;
@@ -562,44 +589,84 @@ export default function SearchPage() {
         .btn-accent {
           background: var(--accent);
           border-color: var(--accent);
-          color: #0a0a0a; font-weight: 600;
+          color: #0a0a0a;
+          font-weight: 600;
         }
 
         .border { border-color: var(--border) !important; }
         .border-t { border-top-color: var(--border) !important; }
 
-        /* --- THE FIX: ensure dropdown popups are above the results card --- */
-        .filters-card { position: relative; z-index: 20; overflow: visible; }
-        .results-card { position: relative; z-index: 0; }
-        /* when the control is focused, make sure it sits on top */
-        .filters-card select:focus,
-        .filters-card .input:focus { position: relative; z-index: 50; }
-
-        /* Sticky table header (no overlap) */
+        /* Sticky table header (lower z-index so portal menus sit above) */
         table { border-collapse: separate; border-spacing: 0; }
         thead.sticky-header th {
           position: sticky;
           top: 0;
-          z-index: 2;
+          z-index: 1;
           background: var(--card);
           border-bottom: 1px solid var(--border);
-          box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0,0,0,0.04);
+          box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0, 0, 0, 0.04);
         }
 
+        /* Row hover */
         .row-hover:hover { background: var(--hover); }
 
-        /* Keep key columns on one line, scale with viewport */
+        /* Allow dropdown to overlap the results card/table */
+        .ww-results-scroll { overflow-x: auto; overflow-y: visible; }
+        .ww-results-card  { overflow: visible; }
+
+        /* Responsive, single-line key columns */
         td[data-col="vin"] .vin {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-          font-size: 12px; white-space: nowrap;
+          font-size: 12px;
+          white-space: nowrap;
         }
+        /* clamp(min, fluid, max) so widths adapt to user resolution */
         td[data-col="vin"] { white-space: nowrap; min-width: clamp(180px, 22vw, 360px); }
         td[data-col="sub_model"] { white-space: nowrap; min-width: clamp(140px, 16vw, 280px); }
         td[data-col="auction_house"] { white-space: nowrap; min-width: clamp(100px, 12vw, 220px); }
         td[data-col="odometer"] { white-space: nowrap; min-width: clamp(90px, 10vw, 140px); }
         td[data-col="sold_price"] { white-space: nowrap; min-width: clamp(100px, 10vw, 160px); }
         td[data-col="sold_date"] { white-space: nowrap; min-width: clamp(110px, 11vw, 180px); }
-        td[data-col="buyer_number"], td[data-col="state"] { white-space: nowrap; }
+
+        /* === Custom select (portal) === */
+        .ww-select-btn {
+          height: 38px;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 0 32px 0 10px;
+          background: var(--card);
+          color: var(--fg);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          width: 100%;
+          position: relative;
+          z-index: 1; /* above nearby borders, below the actual menu */
+        }
+        .ww-select-btn:hover { background: var(--hover); }
+        .ww-caret {
+          position: absolute;
+          right: 10px;
+          pointer-events: none;
+          opacity: .7;
+        }
+        .ww-menu {
+          position: absolute;
+          left: 0; top: 0;
+          z-index: 100000; /* above sticky header & table */
+          background: var(--card);
+          color: var(--fg);
+          border: 1px solid var(--fg);      /* full clean border */
+          border-radius: 10px;              /* rounded corners intact */
+          box-shadow: 0 8px 24px rgba(0,0,0,.12);
+          max-height: 280px;
+          overflow: auto;
+          width: var(--ww-menu-w, 240px);
+        }
+        .ww-option { padding: 8px 10px; cursor: pointer; }
+        .ww-option:hover,
+        .ww-option[aria-selected="true"] { background: var(--muted); }
       `}</style>
     </div>
   );
@@ -614,23 +681,108 @@ function Field({ label, children }: { label: string; children: any }) {
   );
 }
 
-function Select({
+/** Custom select that portals its menu to <body> so borders/corners never get clipped */
+function SelectMenu({
   value,
   onChange,
   options,
   loading,
 }: {
   value: string;
-  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  onChange: (v: string) => void;
   options: string[];
   loading?: boolean;
 }) {
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number }>({
+    top: 0, left: 0, width: 0,
+  });
+
+  function position() {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setCoords({ top: r.bottom + window.scrollY, left: r.left + window.scrollX, width: r.width });
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    position();
+    const onScroll = () => position();
+    const onResize = () => position();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onDown = (e: MouseEvent) => {
+      const el = btnRef.current;
+      const menu = document.getElementById('ww-menu-portal');
+      if (el && !el.contains(e.target as Node) && menu && !menu.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [open]);
+
+  const label = loading ? 'Loading…' : value || 'All';
+
   return (
-    <select className="input" value={value} onChange={onChange} disabled={loading}>
-      <option value="">{loading ? 'Loading…' : 'All'}</option>
-      {options.map((o) => (
-        <option key={o} value={o}>{o}</option>
-      ))}
-    </select>
+    <>
+      <button
+        type="button"
+        ref={btnRef}
+        className="ww-select-btn"
+        onClick={() => !loading && setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={!!loading}
+      >
+        <span className="truncate">{label}</span>
+        <span className="ww-caret">▾</span>
+      </button>
+
+      {open && createPortal(
+        <div
+          id="ww-menu-portal"
+          className="ww-menu"
+          style={{
+            top: coords.top,
+            left: coords.left,
+            ['--ww-menu-w' as any]: `${coords.width}px`,
+          }}
+          role="listbox"
+          aria-activedescendant={value || 'all'}
+        >
+          <div
+            id="all"
+            role="option"
+            aria-selected={value === ''}
+            className="ww-option"
+            onClick={() => { onChange(''); setOpen(false); }}
+          >
+            All
+          </div>
+          {options.map((o) => (
+            <div
+              key={o}
+              role="option"
+              aria-selected={o === value}
+              className="ww-option"
+              onClick={() => { onChange(o); setOpen(false); }}
+            >
+              {o}
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
