@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabaseClient';
 
 type InputChange = React.ChangeEvent<HTMLInputElement>;
@@ -39,7 +40,6 @@ function useDebounce<T>(val: T, ms = 400) {
 
 function ThemeToggleButton() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
-
   useEffect(() => {
     try {
       const stored = localStorage.getItem('theme') as 'light' | 'dark' | null;
@@ -49,14 +49,12 @@ function ThemeToggleButton() {
       document.documentElement.classList.toggle('dark', initial === 'dark');
     } catch {}
   }, []);
-
   function toggle() {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
     document.documentElement.classList.toggle('dark', next === 'dark');
     try { localStorage.setItem('theme', next); } catch {}
   }
-
   return (
     <button className="btn btn-ghost" onClick={toggle} aria-label="Toggle theme">
       {theme === 'dark' ? '🌙 Dark' : '☀️ Light'}
@@ -121,7 +119,6 @@ export default function SearchPage() {
                    : supabase.rpc('distinct_model'),
         supabase.rpc('distinct_incident_type'),
       ]);
-
       setOpts({
         make: (makeRes.data ?? []).map((r: any) => r.make),
         wovr_status: (wovrRes.data ?? []).map((r: any) => r.wovr_status),
@@ -131,9 +128,7 @@ export default function SearchPage() {
         model: (modelRes.data ?? []).map((r: any) => r.model),
         incident_type: (damageRes.data ?? []).map((r: any) => r.incident_type),
       });
-    } finally {
-      setOptsLoading(false);
-    }
+    } finally { setOptsLoading(false); }
   }
 
   useEffect(() => { loadAllOptions(); }, []);
@@ -158,8 +153,8 @@ export default function SearchPage() {
     setPage(1);
     setFilters((s) => ({ ...s, [k]: v }));
   }
-  const onInput = (k: keyof typeof filters) => (e: InputChange) => update(k, e.target.value);
-  const onSelect = (k: keyof typeof filters) => (e: SelectChange) => update(k, e.target.value);
+  const onInput  = (k: keyof typeof filters) => (e: InputChange)  => update(k, e.target.value);
+  const onSelect = (k: keyof typeof filters) => (v: string)       => update(k, v);
 
   async function fetchData() {
     setLoading(true);
@@ -170,27 +165,27 @@ export default function SearchPage() {
       if (priceMin && priceMax && +priceMin > +priceMax) [priceMin, priceMax] = [priceMax, priceMin];
 
       let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), { count: 'exact' });
-
       const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax };
-      if (f.vin.trim())       q = q.ilike('vin', f.vin.trim());
-      if (f.buyer_no.trim())  q = q.ilike('buyer_number', f.buyer_no.trim());
-      if (f.make)             q = q.eq('make', f.make);
-      if (f.model)            q = q.eq('model', f.model);
-      if (f.yearFrom)         q = q.gte('year', +f.yearFrom);
-      if (f.yearTo)           q = q.lte('year', +f.yearTo);
-      if (f.wovr_status)      q = q.eq('wovr_status', f.wovr_status);
-      if (f.sale_status)      q = q.eq('sale_status', f.sale_status);
-      if (f.incident_type)    q = q.eq('incident_type', f.incident_type);
-      if (f.priceMin)         q = q.gte('sold_price', +f.priceMin);
-      if (f.priceMax)         q = q.lte('sold_price', +f.priceMax);
-      if (f.auction_house)    q = q.eq('auction_house', f.auction_house);
-      if (f.state)            q = q.eq('state', f.state);
+
+      if (f.vin.trim())      q = q.ilike('vin', f.vin.trim());
+      if (f.buyer_no.trim()) q = q.ilike('buyer_number', f.buyer_no.trim());
+      if (f.make)            q = q.eq('make', f.make);
+      if (f.model)           q = q.eq('model', f.model);
+      if (f.yearFrom)        q = q.gte('year', +f.yearFrom);
+      if (f.yearTo)          q = q.lte('year', +f.yearTo);
+      if (f.wovr_status)     q = q.eq('wovr_status', f.wovr_status);
+      if (f.sale_status)     q = q.eq('sale_status', f.sale_status);
+      if (f.incident_type)   q = q.eq('incident_type', f.incident_type);
+      if (f.priceMin)        q = q.gte('sold_price', +f.priceMin);
+      if (f.priceMax)        q = q.lte('sold_price', +f.priceMax);
+      if (f.auction_house)   q = q.eq('auction_house', f.auction_house);
+      if (f.state)           q = q.eq('state', f.state);
 
       const sortCol = SORTABLE.has(sort.column) ? sort.column : 'id';
       q = q.order(sortCol, { ascending: sort.direction === 'asc' });
 
       const from = (page - 1) * pageSize;
-      const to = from + pageSize - 1;
+      const to   = from + pageSize - 1;
       q = q.range(from, to);
 
       const { data, error, count } = await q;
@@ -199,11 +194,8 @@ export default function SearchPage() {
       setTotal(count || 0);
     } catch (e: any) {
       setError(e.message || 'Failed to fetch');
-      setRows([]);
-      setTotal(0);
-    } finally {
-      setLoading(false);
-    }
+      setRows([]); setTotal(0);
+    } finally { setLoading(false); }
   }
 
   function toggleSort(col: string) {
@@ -225,7 +217,6 @@ export default function SearchPage() {
 
   return (
     <div className="min-h-screen">
-      {/* Full-width brand bar with thin accent */}
       <header className="ww-header">
         <div className="ww-header__inner">
           <div className="ww-logo">WreckWatch</div>
@@ -233,148 +224,70 @@ export default function SearchPage() {
         </div>
       </header>
 
-      {/* Page container */}
       <div className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
-        {/* Filters (very high z-index while focused; sits above results) */}
         <div className="relative z-[100] rounded-lg border p-4 mb-6 bg-[var(--card)]">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <Field label="VIN (exact)">
-              <input
-                className="input"
-                value={filters.vin}
-                onChange={onInput('vin')}
-                placeholder="e.g. MR0FZ22G401062065"
-              />
+              <input className="input" value={filters.vin} onChange={onInput('vin')} placeholder="e.g. MR0FZ22G401062065" />
             </Field>
 
             <Field label="Buyer number (exact)">
-              <input
-                className="input"
-                value={filters.buyer_no}
-                onChange={onInput('buyer_no')}
-                placeholder="e.g. B12345"
-              />
+              <input className="input" value={filters.buyer_no} onChange={onInput('buyer_no')} placeholder="e.g. B12345" />
             </Field>
 
             <Field label="Make">
-              <Select
-                value={filters.make}
-                onChange={onSelect('make')}
-                options={opts.make}
-                loading={optsLoading}
-              />
+              <SelectMenu value={filters.make} onChange={onSelect('make')} options={opts.make} loading={optsLoading} />
             </Field>
 
             <Field label="Model">
-              <Select
-                value={filters.model}
-                onChange={onSelect('model')}
-                options={opts.model}
-                loading={optsLoading}
-              />
+              <SelectMenu value={filters.model} onChange={onSelect('model')} options={opts.model} loading={optsLoading} />
             </Field>
 
             <Field label="Year (From)">
-              <input
-                className="input"
-                type="number"
-                value={filters.yearFrom}
-                onChange={onInput('yearFrom')}
-                placeholder="e.g. 2015"
-              />
+              <input className="input" type="number" value={filters.yearFrom} onChange={onInput('yearFrom')} placeholder="e.g. 2015" />
             </Field>
 
             <Field label="Year (To)">
-              <input
-                className="input"
-                type="number"
-                value={filters.yearTo}
-                onChange={onInput('yearTo')}
-                placeholder="e.g. 2024"
-              />
+              <input className="input" type="number" value={filters.yearTo} onChange={onInput('yearTo')} placeholder="e.g. 2024" />
             </Field>
 
             <Field label="WOVR Status">
-              <Select
-                value={filters.wovr_status}
-                onChange={onSelect('wovr_status')}
-                options={opts.wovr_status}
-                loading={optsLoading}
-              />
+              <SelectMenu value={filters.wovr_status} onChange={onSelect('wovr_status')} options={opts.wovr_status} loading={optsLoading} />
             </Field>
 
             <Field label="Sale Status">
-              <Select
-                value={filters.sale_status}
-                onChange={onSelect('sale_status')}
-                options={opts.sale_status}
-                loading={optsLoading}
-              />
+              <SelectMenu value={filters.sale_status} onChange={onSelect('sale_status')} options={opts.sale_status} loading={optsLoading} />
             </Field>
 
             <Field label="Damage">
-              <Select
-                value={filters.incident_type}
-                onChange={onSelect('incident_type')}
-                options={opts.incident_type}
-                loading={optsLoading}
-              />
+              <SelectMenu value={filters.incident_type} onChange={onSelect('incident_type')} options={opts.incident_type} loading={optsLoading} />
             </Field>
 
             <Field label="Price Min">
-              <input
-                className="input"
-                type="number"
-                value={filters.priceMin}
-                onChange={onInput('priceMin')}
-                placeholder="e.g. 1000"
-              />
+              <input className="input" type="number" value={filters.priceMin} onChange={onInput('priceMin')} placeholder="e.g. 1000" />
             </Field>
 
             <Field label="Price Max">
-              <input
-                className="input"
-                type="number"
-                value={filters.priceMax}
-                onChange={onInput('priceMax')}
-                placeholder="e.g. 50000"
-              />
+              <input className="input" type="number" value={filters.priceMax} onChange={onInput('priceMax')} placeholder="e.g. 50000" />
             </Field>
 
             <Field label="Auction House">
-              <Select
-                value={filters.auction_house}
-                onChange={onSelect('auction_house')}
-                options={opts.auction_house}
-                loading={optsLoading}
-              />
+              <SelectMenu value={filters.auction_house} onChange={onSelect('auction_house')} options={opts.auction_house} loading={optsLoading} />
             </Field>
 
             <Field label="State">
-              <Select
-                value={filters.state}
-                onChange={onSelect('state')}
-                options={opts.state}
-                loading={optsLoading}
-              />
+              <SelectMenu value={filters.state} onChange={onSelect('state')} options={opts.state} loading={optsLoading} />
             </Field>
 
             <div className="flex items-end gap-2">
-              <button
-                className="btn btn-accent"
-                onClick={() => { setPage(1); fetchData(); }}
-                disabled={loading}
-              >
+              <button className="btn btn-accent" onClick={() => { setPage(1); fetchData(); }} disabled={loading}>
                 {loading ? 'Loading…' : 'Search'}
               </button>
-              <button className="btn" onClick={clearFilters} disabled={loading}>
-                Clear
-              </button>
+              <button className="btn" onClick={clearFilters} disabled={loading}>Clear</button>
             </div>
           </div>
         </div>
 
-        {/* Results (kept at lower z-index) */}
         <div className="relative z-[1] rounded-lg border p-4 mb-6 bg-[var(--card)] ww-results-card">
           <div className="flex items-center justify-between p-4 border-b">
             <div className="text-sm">
@@ -384,6 +297,7 @@ export default function SearchPage() {
               </span>
             </div>
             <div className="flex items-center gap-2">
+              {/* Keep native here; it’s not near the sticky header */}
               <select
                 className="input w-28"
                 value={String(pageSize)}
@@ -450,7 +364,6 @@ export default function SearchPage() {
         </div>
       </div>
 
-      {/* Styles */}
       <style jsx global>{`
         :root {
           --accent: #32cd32;
@@ -490,7 +403,7 @@ export default function SearchPage() {
         .input {
           height: 38px; border: 1px solid var(--border); border-radius: 10px;
           padding: 0 10px; background: var(--card); color: var(--fg);
-          position: relative; z-index: 1; /* give selects their own stacking context */
+          position: relative; z-index: 1;
         }
         .btn {
           height: 36px; padding: 0 12px; border-radius: 10px;
@@ -504,22 +417,15 @@ export default function SearchPage() {
         .border { border-color: var(--border) !important; }
         .border-t { border-top-color: var(--border) !important; }
 
-        /* Each filter field rises to the very top when focused */
-        .ww-field { position: relative; z-index: 0; }
-        .ww-field:focus-within { z-index: 10000; }
-
-        /* Sticky table header with a *low* z-index so it won't overpaint the popup */
         table { border-collapse: separate; border-spacing: 0; }
         thead.sticky-header th {
-          position: sticky; top: 0; z-index: 1; /* was 2 — lower so native popup sits above */
+          position: sticky; top: 0; z-index: 1; /* keep low so portal menu is above */
           background: var(--card);
           border-bottom: 1px solid var(--border);
           box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0,0,0,0.04);
         }
-
         .row-hover:hover { background: var(--hover); }
 
-        /* Make sure native popups aren't clipped by the results container */
         .ww-results-scroll { overflow-x: auto; overflow-y: visible; }
         .ww-results-card  { overflow: visible; }
 
@@ -533,12 +439,33 @@ export default function SearchPage() {
         td[data-col="odometer"] { white-space: nowrap; min-width: clamp(90px, 10vw, 140px); }
         td[data-col="sold_price"] { white-space: nowrap; min-width: clamp(100px, 10vw, 160px); }
         td[data-col="sold_date"] { white-space: nowrap; min-width: clamp(110px, 11vw, 180px); }
-        td[data-col="buyer_number"], td[data-col="state"] { white-space: nowrap; }
+
+        /* === Custom select (portal) === */
+        .ww-select-btn {
+          height: 38px; border: 1px solid var(--border); border-radius: 10px;
+          padding: 0 32px 0 10px; background: var(--card); color: var(--fg);
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 8px; width: 100%; position: relative; z-index: 1;
+        }
+        .ww-select-btn:hover { background: var(--hover); }
+        .ww-caret {
+          position: absolute; right: 10px; pointer-events: none; opacity: .7;
+        }
+        .ww-menu {
+          position: absolute; left: 0; top: 0; z-index: 100000; /* above all */
+          background: var(--card); color: var(--fg);
+          border: 1px solid var(--fg); /* full border you want */
+          border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12);
+          max-height: 280px; overflow: auto; width: var(--ww-menu-w, 240px);
+        }
+        .ww-option { padding: 8px 10px; cursor: pointer; }
+        .ww-option:hover, .ww-option[aria-selected="true"] { background: var(--muted); }
       `}</style>
     </div>
   );
 }
 
+/* ---------- field wrapper ---------- */
 function Field({ label, children }: { label: string; children: any }) {
   return (
     <label className="ww-field flex flex-col gap-1 text-sm">
@@ -548,23 +475,102 @@ function Field({ label, children }: { label: string; children: any }) {
   );
 }
 
-function Select({
+/* ---------- custom select that portals its menu ---------- */
+function SelectMenu({
   value,
   onChange,
   options,
   loading,
 }: {
   value: string;
-  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  onChange: (v: string) => void;
   options: string[];
   loading?: boolean;
 }) {
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{top: number; left: number; width: number}>({ top: 0, left: 0, width: 0 });
+
+  function position() {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setCoords({ top: r.bottom + window.scrollY, left: r.left + window.scrollX, width: r.width });
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    position();
+    const onScroll = () => position();
+    const onResize = () => position();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onDown = (e: MouseEvent) => {
+      const el = btnRef.current;
+      const menu = document.getElementById('ww-menu-portal');
+      if (el && !el.contains(e.target as Node) && menu && !menu.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [open]);
+
+  const label = loading ? 'Loading…' : value || 'All';
+
   return (
-    <select className="input" value={value} onChange={onChange} disabled={loading}>
-      <option value="">{loading ? 'Loading…' : 'All'}</option>
-      {options.map((o) => (
-        <option key={o} value={o}>{o}</option>
-      ))}
-    </select>
+    <>
+      <button
+        type="button"
+        ref={btnRef}
+        className="ww-select-btn"
+        onClick={() => !loading && setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={!!loading}
+      >
+        <span className="truncate">{label}</span>
+        <span className="ww-caret">▾</span>
+      </button>
+
+      {open && createPortal(
+        <div
+          id="ww-menu-portal"
+          className="ww-menu"
+          style={{ top: coords.top, left: coords.left, ['--ww-menu-w' as any]: `${coords.width}px` }}
+          role="listbox"
+          aria-activedescendant={value || 'all'}
+        >
+          <div
+            id="all"
+            role="option"
+            aria-selected={value === ''}
+            className="ww-option"
+            onClick={() => { onChange(''); setOpen(false); }}
+          >
+            All
+          </div>
+          {options.map((o) => (
+            <div
+              key={o}
+              role="option"
+              aria-selected={o === value}
+              className="ww-option"
+              onClick={() => { onChange(o); setOpen(false); }}
+            >
+              {o}
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
