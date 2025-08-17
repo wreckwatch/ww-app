@@ -21,15 +21,12 @@ const DISPLAY = [
   { id: 'sale_status',   label: 'Outcome' },
   { id: 'sold_price',    label: 'Amount' },
   { id: 'sold_date',     label: 'Date' },
-  { id: 'auction_house', label: 'House' },   // 12th column (used in CSS below)
+  { id: 'auction_house', label: 'House' },
   { id: 'buyer_number',  label: 'Buyer' },
   { id: 'state',         label: 'State' },
 ] as const;
 
-// Minimal list of columns fetched from DB (include id for stable keys)
 const QUERY_COLUMNS = ['id', ...DISPLAY.map(d => d.id)];
-
-// Columns allowed for sorting (fallback to id if not sortable)
 const SORTABLE = new Set<string>([...DISPLAY.map(d => d.id), 'id']);
 
 /** debounce hook */
@@ -60,9 +57,7 @@ function ThemeToggleButton() {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
     document.documentElement.classList.toggle('dark', next === 'dark');
-    try {
-      localStorage.setItem('theme', next);
-    } catch {}
+    try { localStorage.setItem('theme', next); } catch {}
   }
 
   return (
@@ -115,7 +110,7 @@ export default function SearchPage() {
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // Load dropdown options – uses your RPCs (including distinct_incident_type)
+  // Load dropdown options – uses your RPCs
   async function loadAllOptions(makeFilter?: string) {
     setOptsLoading(true);
     try {
@@ -153,11 +148,9 @@ export default function SearchPage() {
     }
   }
 
-  useEffect(() => {
-    loadAllOptions();
-  }, []);
+  useEffect(() => { loadAllOptions(); }, []);
 
-  // When make changes, update models list (and reset model if it becomes invalid)
+  // When make changes, update models list
   useEffect(() => {
     (async () => {
       if (!filters.make) {
@@ -178,18 +171,14 @@ export default function SearchPage() {
 
   // Fetch on changes (debounced)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    fetchData();
-  }, [debounced, sort, page, pageSize]);
+  useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
 
   function update(k: keyof typeof filters, v: string) {
     setPage(1);
     setFilters((s) => ({ ...s, [k]: v }));
   }
-  const onInput = (k: keyof typeof filters) => (e: InputChange) =>
-    update(k, e.target.value);
-  const onSelect = (k: keyof typeof filters) => (e: SelectChange) =>
-    update(k, e.target.value);
+  const onInput = (k: keyof typeof filters) => (e: InputChange) => update(k, e.target.value);
+  const onSelect = (k: keyof typeof filters) => (e: SelectChange) => update(k, e.target.value);
 
   async function fetchData() {
     setLoading(true);
@@ -204,9 +193,7 @@ export default function SearchPage() {
         [priceMin, priceMax] = [priceMax, priceMin];
       }
 
-      let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), {
-        count: 'exact',
-      });
+      let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), { count: 'exact' });
 
       const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax };
 
@@ -279,9 +266,7 @@ export default function SearchPage() {
       {/* Full-width brand bar with thin accent */}
       <header className="ww-header">
         <div className="ww-header__inner">
-          <div className="ww-logo">
-            <strong>WRECKWATCH</strong>
-          </div>
+          <div className="ww-logo">WreckWatch</div>
           <ThemeToggleButton />
         </div>
       </header>
@@ -446,9 +431,7 @@ export default function SearchPage() {
                 onChange={(e: SelectChange) => setPageSize(Number(e.target.value))}
               >
                 {[10, 25, 50, 100].map((n) => (
-                  <option key={n} value={String(n)}>
-                    {n} / page
-                  </option>
+                  <option key={n} value={String(n)}>{n} / page</option>
                 ))}
               </select>
               <button
@@ -480,6 +463,7 @@ export default function SearchPage() {
                   {DISPLAY.map(({ id, label }) => (
                     <th
                       key={id}
+                      data-col={id}                      // <-- added for consistent sizing with TD
                       onClick={() => toggleSort(id)}
                       className="px-3 py-2 text-left cursor-pointer"
                     >
@@ -505,37 +489,30 @@ export default function SearchPage() {
                 )}
                 {rows.map((r) => (
                   <tr key={r.id} className="border-t row-hover">
-                    {DISPLAY.map(({ id }) => {
-                      let content: React.ReactNode = r[id] ?? '—';
-
-                      if (id === 'sold_date' && r.sold_date) {
-                        content = new Date(r.sold_date).toLocaleDateString();
-                      } else if (id === 'sold_price' && r.sold_price != null) {
-                        content = `$${Number(r.sold_price).toLocaleString()}`;
-                      } else if (id === 'vin') {
-                        content = <span className="vin">{r[id]}</span>;
-                      } else if (id === 'auction_house') {
-                        if (String(r.auction_house).toLowerCase() === 'pickles') {
-                          content = (
-                            <span className="brand-chip" title="Pickles">
-                              <img
-                                src="/picon.png"
-                                alt="Pickles"
-                                width={18}
-                                height={18}
-                                loading="lazy"
-                              />
-                            </span>
-                          );
-                        }
-                      }
-
-                      return (
-                        <td key={id} className="px-3 py-2" data-col={id}>
-                          {content}
-                        </td>
-                      );
-                    })}
+                    {DISPLAY.map(({ id }) => (
+                      <td key={id} className="px-3 py-2" data-col={id}>
+                        {/* Pickles icon in House column */}
+                        {id === 'auction_house' ? (
+                          r.auction_house === 'Pickles' ? (
+                            <img
+                              src="/picon.png"
+                              alt="Pickles"
+                              width={18}
+                              height={18}
+                              style={{ display: 'block', margin: '0 auto' }}
+                            />
+                          ) : (r.auction_house ?? '—')
+                        ) : id === 'sold_date' && r.sold_date ? (
+                          new Date(r.sold_date).toLocaleDateString()
+                        ) : id === 'sold_price' && r.sold_price != null ? (
+                          `$${Number(r.sold_price).toLocaleString()}`
+                        ) : id === 'vin' ? (
+                          <span className="vin">{r[id]}</span>
+                        ) : (
+                          r[id] ?? '—'
+                        )}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
@@ -546,12 +523,11 @@ export default function SearchPage() {
 
       {/* Design tokens & component styles */}
       <style jsx global>{`
-        /* Color tokens */
         :root {
           --accent: #32cd32;                   /* lime brand */
           --background: 220 20% 97%;           /* soft app canvas */
           --fg: #111111;
-          --card: #ffffff;                      /* cards stay white */
+          --card: #ffffff;
           --border: rgba(0, 0, 0, 0.12);
           --muted: rgba(0, 0, 0, 0.05);
           --hover: rgba(0, 0, 0, 0.06);
@@ -565,44 +541,39 @@ export default function SearchPage() {
           --muted: rgba(255, 255, 255, 0.06);
           --hover: rgba(255, 255, 255, 0.08);
         }
-
         html, body { background: hsl(var(--background)); color: var(--fg); }
 
-        /* Full width header with thin brand accent (full-bleed + sticky) */
+        /* Full width header */
         .ww-header {
           background: var(--card);
           border-bottom: 4px solid var(--accent);
-
           width: 100vw;
           margin-left: 50%;
           transform: translateX(-50%);
-
           position: sticky;
           top: 0;
           z-index: 50;
-
           padding-left: env(safe-area-inset-left);
           padding-right: env(safe-area-inset-right);
         }
         .ww-header__inner {
           max-width: min(100vw - 24px, 1600px);
           margin: 0 auto;
-          padding: 10px 16px;
+          padding: 12px 16px;
           display: flex;
           align-items: center;
           justify-content: space-between;
         }
-        .ww-logo strong {
+        .ww-logo {
           font-weight: 800;
-          letter-spacing: 0.5px;
-          font-size: clamp(22px, 2.2vw, 28px);
-          line-height: 1.2;
+          letter-spacing: 0.2px;
+          font-size: 28px;               /* larger, bold brand */
         }
 
         .input {
           height: 38px;
           border: 1px solid var(--border);
-          border-radius: 10px;
+          border-radius: 8px;
           padding: 0 10px;
           background: var(--card);
           color: var(--fg);
@@ -628,7 +599,7 @@ export default function SearchPage() {
         .border { border-color: var(--border) !important; }
         .border-t { border-top-color: var(--border) !important; }
 
-        /* Sticky table header (no overlap) */
+        /* Sticky table header */
         table { border-collapse: separate; border-spacing: 0; }
         thead.sticky-header th {
           position: sticky;
@@ -639,38 +610,29 @@ export default function SearchPage() {
           box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0,0,0,0.04);
         }
 
-        /* Row hover */
         .row-hover:hover { background: var(--hover); }
 
-        /* Responsive, single-line key columns */
-        td[data-col="vin"] .vin {
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-          font-size: 12px;
+        /* HOUSE: make this column narrow and centered */
+        td[data-col="auction_house"],
+        th[data-col="auction_house"] {
+          width: 56px;
+          min-width: 56px;
+          max-width: 56px;
+          text-align: center;
+        }
+
+        /* VIN: same font as table + fixed width for 17 chars */
+        td[data-col="vin"],
+        th[data-col="vin"] {
+          width: 20ch;
+          min-width: 20ch;
+          max-width: 20ch;
           white-space: nowrap;
         }
-        /* clamp(min, fluid, max) so widths adapt to user resolution */
-        td[data-col="vin"] { white-space: nowrap; min-width: clamp(180px, 22vw, 360px); }
-        td[data-col="sub_model"] { white-space: nowrap; min-width: clamp(140px, 16vw, 280px); }
-        td[data-col="odometer"] { white-space: nowrap; min-width: clamp(90px, 10vw, 140px); }
-        td[data-col="sold_price"] { white-space: nowrap; min-width: clamp(100px, 10vw, 160px); }
-        td[data-col="sold_date"] { white-space: nowrap; min-width: clamp(110px, 11vw, 180px); }
-        td[data-col="buyer_number"], td[data-col="state"] { white-space: nowrap; }
-
-        /* Compact icon-only "House" column (12th) */
-        th:nth-child(12),
-        td[data-col="auction_house"] {
-          width: 60px;
-          min-width: 60px;
-          max-width: 60px;
-          text-align: center;
-          padding-left: 0;
-          padding-right: 0;
-        }
-        td[data-col="auction_house"] .brand-chip img {
-          height: 18px;
-          width: auto;
-          display: block;
-          margin-inline: auto;
+        td[data-col="vin"] .vin {
+          font-family: inherit;
+          font-size: inherit;
+          letter-spacing: .02em; /* optional readability */
         }
       `}</style>
     </div>
@@ -701,9 +663,7 @@ function Select({
     <select className="input" value={value} onChange={onChange} disabled={loading}>
       <option value="">{loading ? 'Loading…' : 'All'}</option>
       {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
-        </option>
+        <option key={o} value={o}>{o}</option>
       ))}
     </select>
   );
