@@ -20,7 +20,7 @@ const DISPLAY = [
   { id: 'incident_type', label: 'Damage' },
   { id: 'sale_status',   label: 'Outcome' },
   { id: 'sold_price',    label: 'Amount' },
-  { id: 'sold_date',     label: 'Date' },   // filters below target this field
+  { id: 'sold_date',     label: 'Date' },   // FE uses coalesce(sold_date, auction_date)
   { id: 'auction_house', label: 'House' },
   { id: 'buyer_number',  label: 'Buyer' },
   { id: 'state',         label: 'State' },
@@ -80,40 +80,45 @@ function ThemeToggleButton() {
   );
 }
 
+/** Filters shape + single source of truth for “empty filters” */
+type Filters = {
+  vin: string;
+  buyer_no: string;
+  make: string;
+  model: string;
+  yearFrom: string;
+  yearTo: string;
+  dateFrom: string;
+  dateTo: string;
+  wovr_status: string;
+  sale_status: string;
+  incident_types: string[]; // multi select
+  priceMin: string;
+  priceMax: string;
+  auction_house: string;
+  state: string;
+};
+
+const INITIAL_FILTERS: Filters = {
+  vin: '',
+  buyer_no: '',
+  make: '',
+  model: '',
+  yearFrom: '',
+  yearTo: '',
+  dateFrom: '',
+  dateTo: '',
+  wovr_status: '',
+  sale_status: '',
+  incident_types: [],
+  priceMin: '',
+  priceMax: '',
+  auction_house: '',
+  state: '',
+};
+
 export default function SearchPage() {
-  const [filters, setFilters] = useState<{
-    vin: string;
-    buyer_no: string;
-    make: string;
-    model: string;
-    yearFrom: string;
-    yearTo: string;
-    dateFrom: string;
-    dateTo: string;
-    wovr_status: string;
-    sale_status: string;
-    incident_types: string[]; // multi select
-    priceMin: string;
-    priceMax: string;
-    auction_house: string;
-    state: string;
-  }>({
-    vin: '',
-    buyer_no: '',
-    make: '',
-    model: '',
-    yearFrom: '',
-    yearTo: '',
-    dateFrom: '',
-    dateTo: '',
-    wovr_status: '',
-    sale_status: '',
-    incident_types: [],
-    priceMin: '',
-    priceMax: '',
-    auction_house: '',
-    state: '',
-  });
+  const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
   const debounced = useDebounce(filters, 400);
 
   const [rows, setRows] = useState<any[]>([]);
@@ -132,7 +137,7 @@ export default function SearchPage() {
   });
   const [optsLoading, setOptsLoading] = useState(false);
 
-  // NEW: map of VIN -> total count in DB
+  // map of VIN -> total count in DB
   const [vinCounts, setVinCounts] = useState<Record<string, number>>({});
 
   // Sorting/paging
@@ -216,12 +221,12 @@ export default function SearchPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
 
-  function update(k: keyof typeof filters, v: any) {
+  function update(k: keyof Filters, v: any) {
     setPage(1);
     setFilters((s) => ({ ...s, [k]: v }));
   }
-  const onInput = (k: keyof typeof filters) => (e: InputChange) => update(k, e.target.value);
-  const onSelect = (k: keyof typeof filters) => (e: SelectChange) => update(k, e.target.value);
+  const onInput = (k: keyof Filters) => (e: InputChange) => update(k, e.target.value);
+  const onSelect = (k: keyof Filters) => (e: SelectChange) => update(k, e.target.value);
 
   async function fetchVinCounts(forRows: any[]) {
     const vins: string[] = Array.from(new Set(forRows.map(r => r.vin).filter(Boolean)));
@@ -336,23 +341,7 @@ export default function SearchPage() {
   }
 
   function clearFilters() {
-    setFilters({
-      vin: '',
-      buyer_no: '',
-      make: '',
-      model: '',
-      yearFrom: '',
-      yearTo: '',
-      dateFrom: '',
-      dateTo: '',
-      wovr_status: '',
-      sale_status: '',
-      incident_types: [],
-      priceMin: '',
-      priceMax: '',
-      auction_house: '',
-      state: '',
-    });
+    setFilters(INITIAL_FILTERS);
     setPage(1);
   }
 
@@ -402,24 +391,25 @@ export default function SearchPage() {
     );
   }
 
-  // Link visibility: show until 7 days after auction_date (fallback to sold_date if needed)
+  /**
+   * Link visibility:
+   * - Hide if there is NO date at all (neither auction_date nor sold_date)
+   * - If there is a date, show the link up to 7 days after that date
+   */
   function renderLinkCell(r: any) {
     const href = typeof r.url === 'string' ? r.url : '';
     if (!href) return '—';
 
     const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
-    const refTs = Number.isFinite(auctionTs) ? auctionTs :
-                  (r.sold_date ? Date.parse(r.sold_date) : NaN);
+    const soldTs    = r.sold_date    ? Date.parse(r.sold_date)    : NaN;
 
-    if (!Number.isFinite(refTs)) {
-      return (
-        <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
-          Link
-        </a>
-      );
-    }
+    // If both dates are missing, do not show a link
+    if (!Number.isFinite(auctionTs) && !Number.isFinite(soldTs)) return '—';
 
+    // Prefer auction date; fall back to sold date if needed
+    const refTs = Number.isFinite(auctionTs) ? auctionTs : soldTs;
     const cutoff = refTs + 7 * 24 * 60 * 60 * 1000; // +7 days
+
     if (Date.now() > cutoff) return '—';
 
     return (
@@ -429,11 +419,11 @@ export default function SearchPage() {
     );
   }
 
-  // NEW: click helper to focus this VIN
-  function focusVin(vin: string) {
+  // Click VIN counter: clear ALL filters and focus on this VIN
+  function focusVinAll(vin: string) {
     if (!vin) return;
     setPage(1);
-    setFilters(f => ({ ...f, vin }));
+    setFilters({ ...INITIAL_FILTERS, vin });
   }
 
   return (
@@ -722,7 +712,7 @@ export default function SearchPage() {
                               <button
                                 className="vin-badge"
                                 title={`Show ${vinCounts[r.vin]} results for this VIN`}
-                                onClick={() => focusVin(r.vin)}
+                                onClick={() => focusVinAll(r.vin)}
                               >
                                 ×{vinCounts[r.vin]}
                               </button>
@@ -852,7 +842,7 @@ export default function SearchPage() {
         /* VIN: fixed width for 17 chars + badge */
         td[data-col="vin"],
         th[data-col="vin"] {
-          width: 24ch;        /* ⬅ increased from 20ch to 24ch */
+          width: 24ch;
           min-width: 24ch;
           max-width: 24ch;
           white-space: nowrap;
@@ -872,7 +862,7 @@ export default function SearchPage() {
           background: #ffed29;
           color: #000000;
           cursor: pointer;
-          margin-left: 8px;   /* ⬅ extra breathing room from the VIN text */
+          margin-left: 8px;
         }
 
         /* LINK: narrow & centered */
