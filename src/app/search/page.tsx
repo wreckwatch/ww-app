@@ -868,8 +868,9 @@ export default function SearchPage() {
           line-height: 1;
           padding: 3px 6px;
           border-radius: 9999px;
-          border: 1px solid var(--border);
-          background: var(--muted);
+          border: 1px solid #edc001;   /* optional */
+          background: #ffed29;          /* <— new bg */
+          color: #000000;               /* optional text color */
           cursor: pointer;
         }
 
