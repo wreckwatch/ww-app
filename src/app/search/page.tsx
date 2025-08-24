@@ -24,7 +24,7 @@ const DISPLAY = [
   { id: 'auction_house', label: 'House' },
   { id: 'buyer_number',  label: 'Buyer' },
   { id: 'state',         label: 'State' },
-  // new, UI-only column (not a DB field)
+  // UI-only column
   { id: 'link',          label: 'Link' },
 ] as const;
 
@@ -104,8 +104,8 @@ export default function SearchPage() {
     model: '',
     yearFrom: '',
     yearTo: '',
-    dateFrom: '', // YYYY-MM-DD
-    dateTo: '',   // YYYY-MM-DD
+    dateFrom: '',
+    dateTo: '',
     wovr_status: '',
     sale_status: '',
     incident_types: [],
@@ -131,6 +131,9 @@ export default function SearchPage() {
     state: [],
   });
   const [optsLoading, setOptsLoading] = useState(false);
+
+  // NEW: map of VIN -> total count in DB
+  const [vinCounts, setVinCounts] = useState<Record<string, number>>({});
 
   // Sorting/paging
   const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>(
@@ -220,6 +223,30 @@ export default function SearchPage() {
   const onInput = (k: keyof typeof filters) => (e: InputChange) => update(k, e.target.value);
   const onSelect = (k: keyof typeof filters) => (e: SelectChange) => update(k, e.target.value);
 
+  async function fetchVinCounts(forRows: any[]) {
+    const vins: string[] = Array.from(new Set(forRows.map(r => r.vin).filter(Boolean)));
+    if (vins.length === 0) {
+      setVinCounts({});
+      return;
+    }
+
+    // Up to 25 small HEAD queries; simple and reliable.
+    const entries = await Promise.all(
+      vins.map(async (v) => {
+        const { count, error } = await supabase
+          .from(TABLE)
+          .select('id', { count: 'exact', head: true })
+          .eq('vin', v);
+        if (error) console.error('VIN count error', v, error);
+        return [v, count || 0] as const;
+      })
+    );
+
+    const map: Record<string, number> = {};
+    for (const [v, c] of entries) map[v] = c;
+    setVinCounts(map);
+  }
+
   async function fetchData() {
     setLoading(true);
     setError('');
@@ -252,7 +279,7 @@ export default function SearchPage() {
       if (f.wovr_status) q = q.eq('wovr_status', f.wovr_status);
       if (f.sale_status) q = q.eq('sale_status', f.sale_status);
 
-      // MULTI-SELECT: incident_types
+      // MULTI-SELECT: incident_types (prefix expansion)
       if (Array.isArray(f.incident_types) && f.incident_types.length > 0) {
         const allOpts = opts.incident_type ?? [];
         const expanded = new Set<string>();
@@ -272,7 +299,7 @@ export default function SearchPage() {
       if (f.auction_house) q = q.eq('auction_house', f.auction_house);
       if (f.state) q = q.eq('state', f.state);
 
-      // Date range filter on "sold_date" from the view
+      // Date range filter on the view's sold_date (coalesce(sold_date, auction_date))
       if (f.dateFrom) q = q.gte('sold_date', toStartOfDayISO(f.dateFrom));
       if (f.dateTo)   q = q.lte('sold_date', toEndOfDayISO(f.dateTo));
 
@@ -287,17 +314,21 @@ export default function SearchPage() {
       if (error) throw error;
       setRows(data || []);
       setTotal(count || 0);
+
+      // After rows load, fetch per-VIN counts so we can show the ×N badge
+      await fetchVinCounts(data || []);
     } catch (e: any) {
       setError(e.message || 'Failed to fetch');
       setRows([]);
       setTotal(0);
+      setVinCounts({});
     } finally {
       setLoading(false);
     }
   }
 
   function toggleSort(col: string) {
-    if (!SORTABLE.has(col)) return;  // avoid sorting the Link UI column
+    if (!SORTABLE.has(col)) return;
     setSort((s) => ({
       column: col,
       direction: s.column === col && s.direction === 'asc' ? 'desc' : 'asc',
@@ -381,7 +412,6 @@ export default function SearchPage() {
                   (r.sold_date ? Date.parse(r.sold_date) : NaN);
 
     if (!Number.isFinite(refTs)) {
-      // if we don't have any date, show the link (conservative)
       return (
         <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
           Link
@@ -397,6 +427,13 @@ export default function SearchPage() {
         Link
       </a>
     );
+  }
+
+  // NEW: click helper to focus this VIN
+  function focusVin(vin: string) {
+    if (!vin) return;
+    setPage(1);
+    setFilters(f => ({ ...f, vin }));
   }
 
   return (
@@ -471,7 +508,7 @@ export default function SearchPage() {
             </Field>
 
             {/* Date range calendars */}
-            <Field label="Date (From)">
+            <Field label="Auction Date (From)">
               <input
                 className="input"
                 type="date"
@@ -480,7 +517,7 @@ export default function SearchPage() {
               />
             </Field>
 
-            <Field label="Date (To)">
+            <Field label="Auction Date (To)">
               <input
                 className="input"
                 type="date"
@@ -679,7 +716,18 @@ export default function SearchPage() {
                         ) : id === 'sold_price' && r.sold_price != null ? (
                           `$${Number(r.sold_price).toLocaleString()}`
                         ) : id === 'vin' ? (
-                          <span className="vin">{r[id]}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="vin">{r.vin}</span>
+                            {vinCounts[r.vin] > 1 && (
+                              <button
+                                className="vin-badge"
+                                title={`Show ${vinCounts[r.vin]} results for this VIN`}
+                                onClick={() => focusVin(r.vin)}
+                              >
+                                ×{vinCounts[r.vin]}
+                              </button>
+                            )}
+                          </div>
                         ) : id === 'link' ? (
                           renderLinkCell(r)
                         ) : (
@@ -814,6 +862,16 @@ export default function SearchPage() {
           font-size: inherit;
           letter-spacing: .02em;
         }
+        /* VIN badge */
+        .vin-badge {
+          font-size: 11px;
+          line-height: 1;
+          padding: 3px 6px;
+          border-radius: 9999px;
+          border: 1px solid var(--border);
+          background: var(--muted);
+          cursor: pointer;
+        }
 
         /* LINK: narrow & centered */
         td[data-col="link"], th[data-col="link"] {
@@ -908,16 +966,10 @@ function MultiSelect({
       {open && (
         <div className="absolute z-50 mt-1 w-full rounded-md border bg-[var(--card)] shadow max-h-64 overflow-auto p-2">
           <div className="flex items-center justify-between px-1 pb-2">
-            <button
-              className="text-xs underline"
-              onClick={() => onChange([])}
-            >
+            <button className="text-xs underline" onClick={() => onChange([])}>
               Clear (All)
             </button>
-            <button
-              className="text-xs underline"
-              onClick={() => onChange(options.slice(0, 50))}
-            >
+            <button className="text-xs underline" onClick={() => onChange(options.slice(0, 50))}>
               Select many
             </button>
           </div>
