@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
 type InputChange = React.ChangeEvent<HTMLInputElement>;
@@ -68,19 +68,34 @@ function ThemeToggleButton() {
 }
 
 export default function SearchPage() {
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<{
+    vin: string;
+    buyer_no: string;
+    make: string;
+    model: string;
+    yearFrom: string;
+    yearTo: string;
+    dateFrom: string;
+    dateTo: string;
+    wovr_status: string;
+    sale_status: string;
+    incident_types: string[]; // <- multi select
+    priceMin: string;
+    priceMax: string;
+    auction_house: string;
+    state: string;
+  }>({
     vin: '',
     buyer_no: '',
     make: '',
     model: '',
     yearFrom: '',
     yearTo: '',
-    // NEW: date range (targets the "Date" column shown, i.e., sold_date from the view)
     dateFrom: '', // YYYY-MM-DD
     dateTo: '',   // YYYY-MM-DD
     wovr_status: '',
     sale_status: '',
-    incident_type: '',
+    incident_types: [],        // <- multi
     priceMin: '',
     priceMax: '',
     auction_house: '',
@@ -185,7 +200,7 @@ export default function SearchPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
 
-  function update(k: keyof typeof filters, v: string) {
+  function update(k: keyof typeof filters, v: any) {
     setPage(1);
     setFilters((s) => ({ ...s, [k]: v }));
   }
@@ -223,13 +238,29 @@ export default function SearchPage() {
       if (f.yearTo) q = q.lte('year', Number(f.yearTo));
       if (f.wovr_status) q = q.eq('wovr_status', f.wovr_status);
       if (f.sale_status) q = q.eq('sale_status', f.sale_status);
-      if (f.incident_type) q = q.eq('incident_type', f.incident_type);
+
+      // MULTI-SELECT: incident_types
+      if (Array.isArray(f.incident_types) && f.incident_types.length > 0) {
+        // Expand base selections to include sub-variants, e.g. "Malicious" -> every opt that starts with "Malicious,"
+        const allOpts = opts.incident_type ?? [];
+        const expanded = new Set<string>();
+        for (const sel of f.incident_types) {
+          expanded.add(sel);
+          const prefix = sel.toLowerCase();
+          for (const opt of allOpts) {
+            const o = opt.toLowerCase();
+            if (o.startsWith(prefix + ',')) expanded.add(opt);
+          }
+        }
+        q = q.in('incident_type', Array.from(expanded));
+      }
+
       if (f.priceMin) q = q.gte('sold_price', Number(f.priceMin));
       if (f.priceMax) q = q.lte('sold_price', Number(f.priceMax));
       if (f.auction_house) q = q.eq('auction_house', f.auction_house);
       if (f.state) q = q.eq('state', f.state);
 
-      // NEW: Date range filter on "sold_date" from the view
+      // Date range filter on "sold_date" from the view
       if (f.dateFrom) q = q.gte('sold_date', toStartOfDayISO(f.dateFrom));
       if (f.dateTo)   q = q.lte('sold_date', toEndOfDayISO(f.dateTo));
 
@@ -273,7 +304,7 @@ export default function SearchPage() {
       dateTo: '',
       wovr_status: '',
       sale_status: '',
-      incident_type: '',
+      incident_types: [], // reset
       priceMin: '',
       priceMax: '',
       auction_house: '',
@@ -399,8 +430,8 @@ export default function SearchPage() {
               />
             </Field>
 
-            {/* NEW: Date range calendars */}
-            <Field label="Auction Date (From)">
+            {/* Date range calendars */}
+            <Field label="Date (From)">
               <input
                 className="input"
                 type="date"
@@ -409,7 +440,7 @@ export default function SearchPage() {
               />
             </Field>
 
-            <Field label="Auction Date (To)">
+            <Field label="Date (To)">
               <input
                 className="input"
                 type="date"
@@ -436,12 +467,13 @@ export default function SearchPage() {
               />
             </Field>
 
+            {/* NEW: Damage multi-select */}
             <Field label="Damage">
-              <Select
-                value={filters.incident_type}
-                onChange={onSelect('incident_type')}
+              <MultiSelect
                 options={opts.incident_type}
-                loading={optsLoading}
+                value={filters.incident_types}
+                onChange={(arr) => update('incident_types', arr)}
+                disabled={optsLoading}
               />
             </Field>
 
@@ -773,5 +805,89 @@ function Select({
         <option key={o} value={o}>{o}</option>
       ))}
     </select>
+  );
+}
+
+/** Minimal multi-select with checkboxes and an All/Clear affordance */
+function MultiSelect({
+  value,
+  onChange,
+  options,
+  disabled,
+}: {
+  value: string[];
+  onChange: (vals: string[]) => void;
+  options: string[];
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const toggle = (opt: string) => {
+    const set = new Set(value);
+    set.has(opt) ? set.delete(opt) : set.add(opt);
+    onChange(Array.from(set));
+  };
+
+  const label =
+    value.length === 0 ? 'All' :
+    value.length <= 3 ? value.join(', ') :
+    `${value.length} selected`;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className="input w-full text-left flex items-center justify-between"
+        onClick={() => !disabled && setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+      >
+        <span className="truncate">{label}</span>
+        <span className="ml-2">▾</span>
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-md border bg-[var(--card)] shadow max-h-64 overflow-auto p-2">
+          <div className="flex items-center justify-between px-1 pb-2">
+            <button
+              className="text-xs underline"
+              onClick={() => onChange([])}
+            >
+              Clear (All)
+            </button>
+            <button
+              className="text-xs underline"
+              onClick={() => onChange(options.slice(0, 50))}
+            >
+              Select many
+            </button>
+          </div>
+
+          {options.map((opt) => (
+            <label
+              key={opt}
+              className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--hover)] cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={value.includes(opt)}
+                onChange={() => toggle(opt)}
+              />
+              <span className="truncate">{opt}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
