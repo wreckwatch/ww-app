@@ -716,7 +716,7 @@ export default function SearchPage() {
                         ) : id === 'sold_price' && r.sold_price != null ? (
                           `$${Number(r.sold_price).toLocaleString()}`
                         ) : id === 'vin' ? (
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center">
                             <span className="vin">{r.vin}</span>
                             {vinCounts[r.vin] > 1 && (
                               <button
@@ -849,12 +849,12 @@ export default function SearchPage() {
           text-align: center;
         }
 
-        /* VIN: same font + fixed width for 17 chars */
+        /* VIN: fixed width for 17 chars + badge */
         td[data-col="vin"],
         th[data-col="vin"] {
-          width: 20ch;
-          min-width: 20ch;
-          max-width: 20ch;
+          width: 24ch;        /* ⬅ increased from 20ch to 24ch */
+          min-width: 24ch;
+          max-width: 24ch;
           white-space: nowrap;
         }
         td[data-col="vin"] .vin {
@@ -868,10 +868,11 @@ export default function SearchPage() {
           line-height: 1;
           padding: 3px 6px;
           border-radius: 9999px;
-          border: 1px solid #edc001;   /* optional */
-          background: #ffed29;          /* <— new bg */
-          color: #000000;               /* optional text color */
+          border: 1px solid #edc001;
+          background: #ffed29;
+          color: #000000;
           cursor: pointer;
+          margin-left: 8px;   /* ⬅ extra breathing room from the VIN text */
         }
 
         /* LINK: narrow & centered */
