@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
 type InputChange = React.ChangeEvent<HTMLInputElement>;
@@ -20,40 +20,26 @@ const DISPLAY = [
   { id: 'incident_type', label: 'Damage' },
   { id: 'sale_status',   label: 'Outcome' },
   { id: 'sold_price',    label: 'Amount' },
-  { id: 'date_display',  label: 'Date' },   // we render from sold_date || auction_date
+  { id: 'sold_date',     label: 'Date' },   // filters below target this field
   { id: 'auction_house', label: 'House' },
   { id: 'buyer_number',  label: 'Buyer' },
   { id: 'state',         label: 'State' },
-  { id: 'link',          label: 'Link' },   // NEW column
+  // new, UI-only column (not a DB field)
+  { id: 'link',          label: 'Link' },
 ] as const;
 
-// Minimal list of columns fetched from DB (include id for stable keys)
-// NOTE: include url, auction_date, sold_date to power link/date behaviors
+// Query the real DB columns PLUS url & auction_date (used for link rules)
 const QUERY_COLUMNS = [
   'id',
-  'year',
-  'make',
-  'model',
-  'sub_model',
-  'vin',
-  'odometer',
-  'wovr_status',
-  'incident_type',
-  'sale_status',
-  'sold_price',
-  'sold_date',
-  'auction_date',
-  'auction_house',
-  'buyer_number',
-  'state',
   'url',
+  'auction_date',
+  ...DISPLAY.filter(d => d.id !== 'link').map(d => d.id),
 ];
 
-/** Columns allowed for sorting */
+// Sortable columns: everything except the UI-only "link"
 const SORTABLE = new Set<string>([
-  'year','make','model','sub_model','vin','odometer','wovr_status','incident_type',
-  'sale_status','sold_price','sold_date','auction_date','auction_house','buyer_number',
-  'state','id'
+  ...DISPLAY.filter(d => d.id !== 'link').map(d => d.id),
+  'id',
 ]);
 
 /** debounce hook */
@@ -95,24 +81,38 @@ function ThemeToggleButton() {
 }
 
 export default function SearchPage() {
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<{
+    vin: string;
+    buyer_no: string;
+    make: string;
+    model: string;
+    yearFrom: string;
+    yearTo: string;
+    dateFrom: string;
+    dateTo: string;
+    wovr_status: string;
+    sale_status: string;
+    incident_types: string[]; // multi select
+    priceMin: string;
+    priceMax: string;
+    auction_house: string;
+    state: string;
+  }>({
     vin: '',
     buyer_no: '',
     make: '',
     model: '',
     yearFrom: '',
     yearTo: '',
+    dateFrom: '', // YYYY-MM-DD
+    dateTo: '',   // YYYY-MM-DD
     wovr_status: '',
     sale_status: '',
-    // Damage is multi-select:
-    incident_type_multi: [] as string[],
+    incident_types: [],
     priceMin: '',
     priceMax: '',
     auction_house: '',
     state: '',
-    // Date range that matches sold_date OR auction_date
-    dateFrom: '',
-    dateTo: '',
   });
   const debounced = useDebounce(filters, 400);
 
@@ -133,15 +133,14 @@ export default function SearchPage() {
   const [optsLoading, setOptsLoading] = useState(false);
 
   // Sorting/paging
-  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>({
-    column: 'sold_date',
-    direction: 'desc',
-  });
+  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>(
+    { column: 'sold_date', direction: 'desc' }
+  );
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  /** Load dropdown options */
+  // Load dropdown options – uses your RPCs
   async function loadAllOptions(makeFilter?: string) {
     setOptsLoading(true);
     try {
@@ -181,7 +180,7 @@ export default function SearchPage() {
 
   useEffect(() => { loadAllOptions(); }, []);
 
-  // When make changes, update models list (and reset model if it becomes invalid)
+  // When make changes, update models list
   useEffect(() => {
     (async () => {
       if (!filters.make) {
@@ -200,6 +199,16 @@ export default function SearchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.make]);
 
+  // Helpers: date bounds for the date picker values (interpret local, send ISO)
+  function toStartOfDayISO(d: string): string {
+    const dt = new Date(`${d}T00:00:00`);
+    return dt.toISOString();
+  }
+  function toEndOfDayISO(d: string): string {
+    const dt = new Date(`${d}T23:59:59.999`);
+    return dt.toISOString();
+  }
+
   // Fetch on changes (debounced)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
@@ -215,71 +224,61 @@ export default function SearchPage() {
     setLoading(true);
     setError('');
     try {
-      // Normalize numeric ranges
-      let { yearFrom, yearTo, priceMin, priceMax } = debounced;
+      // Normalise ranges
+      let { yearFrom, yearTo, priceMin, priceMax, dateFrom, dateTo } = debounced;
       if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) {
         [yearFrom, yearTo] = [yearTo, yearFrom];
       }
       if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) {
         [priceMin, priceMax] = [priceMax, priceMin];
       }
+      if (dateFrom && dateTo && dateFrom > dateTo) {
+        [dateFrom, dateTo] = [dateTo, dateFrom];
+      }
 
       let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), { count: 'exact' });
 
+      const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax, dateFrom, dateTo };
+
       // VIN exact (case-insensitive)
-      if (debounced.vin.trim()) q = q.ilike('vin', debounced.vin.trim());
+      if (f.vin.trim()) q = q.ilike('vin', f.vin.trim());
       // Buyer number exact (case-insensitive)
-      if (debounced.buyer_no.trim()) q = q.ilike('buyer_number', debounced.buyer_no.trim());
+      if (f.buyer_no.trim()) q = q.ilike('buyer_number', f.buyer_no.trim());
 
-      if (debounced.make) q = q.eq('make', debounced.make);
-      if (debounced.model) q = q.eq('model', debounced.model);
-      if (yearFrom) q = q.gte('year', Number(yearFrom));
-      if (yearTo) q = q.lte('year', Number(yearTo));
-      if (debounced.wovr_status) q = q.eq('wovr_status', debounced.wovr_status);
-      if (debounced.sale_status) q = q.eq('sale_status', debounced.sale_status);
+      if (f.make) q = q.eq('make', f.make);
+      if (f.model) q = q.eq('model', f.model);
+      if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
+      if (f.yearTo) q = q.lte('year', Number(f.yearTo));
+      if (f.wovr_status) q = q.eq('wovr_status', f.wovr_status);
+      if (f.sale_status) q = q.eq('sale_status', f.sale_status);
 
-      // Damage multi-select: OR each choice
-      if (debounced.incident_type_multi.length > 0) {
-        const ors = debounced.incident_type_multi
-          .map((opt) => `incident_type.eq.${encodeURIComponent(opt)}`)
-          .join(',');
-        q = q.or(ors);
-      }
-
-      if (priceMin) q = q.gte('sold_price', Number(priceMin));
-      if (priceMax) q = q.lte('sold_price', Number(priceMax));
-      if (debounced.auction_house) q = q.eq('auction_house', debounced.auction_house);
-      if (debounced.state) q = q.eq('state', debounced.state);
-
-      // Date range (OR across sold_date and auction_date)
-      const { dateFrom, dateTo } = debounced;
-      const df = dateFrom ? new Date(dateFrom) : null;
-      const dt = dateTo ? new Date(dateTo) : null;
-      if (df || dt) {
-        // Build range strings in ISO (date only)
-        const lower = df ? df.toISOString() : null;
-        const upper = dt ? new Date(dt.getTime() + 24 * 60 * 60 * 1000).toISOString() : null; // inclusive end
-
-        // Compose OR: and(sold_date >= lower, sold_date < upper) , and(auction_date >= lower, auction_date < upper)
-        const parts: string[] = [];
-        if (lower && upper) {
-          parts.push(`and(sold_date.gte.${lower},sold_date.lt.${upper})`);
-          parts.push(`and(auction_date.gte.${lower},auction_date.lt.${upper})`);
-        } else if (lower) {
-          parts.push(`sold_date.gte.${lower}`);
-          parts.push(`auction_date.gte.${lower}`);
-        } else if (upper) {
-          parts.push(`sold_date.lt.${upper}`);
-          parts.push(`auction_date.lt.${upper}`);
+      // MULTI-SELECT: incident_types
+      if (Array.isArray(f.incident_types) && f.incident_types.length > 0) {
+        const allOpts = opts.incident_type ?? [];
+        const expanded = new Set<string>();
+        for (const sel of f.incident_types) {
+          expanded.add(sel);
+          const prefix = sel.toLowerCase();
+          for (const opt of allOpts) {
+            const o = opt.toLowerCase();
+            if (o.startsWith(prefix + ',')) expanded.add(opt);
+          }
         }
-        q = q.or(parts.join(','));
+        q = q.in('incident_type', Array.from(expanded));
       }
 
-      // Sort
+      if (f.priceMin) q = q.gte('sold_price', Number(f.priceMin));
+      if (f.priceMax) q = q.lte('sold_price', Number(f.priceMax));
+      if (f.auction_house) q = q.eq('auction_house', f.auction_house);
+      if (f.state) q = q.eq('state', f.state);
+
+      // Date range filter on "sold_date" from the view
+      if (f.dateFrom) q = q.gte('sold_date', toStartOfDayISO(f.dateFrom));
+      if (f.dateTo)   q = q.lte('sold_date', toEndOfDayISO(f.dateTo));
+
       const sortCol = SORTABLE.has(sort.column) ? sort.column : 'id';
       q = q.order(sortCol, { ascending: sort.direction === 'asc' });
 
-      // Paging
       const from = (page - 1) * pageSize;
       const to = from + pageSize - 1;
       q = q.range(from, to);
@@ -298,7 +297,7 @@ export default function SearchPage() {
   }
 
   function toggleSort(col: string) {
-    if (!SORTABLE.has(col)) return;
+    if (!SORTABLE.has(col)) return;  // avoid sorting the Link UI column
     setSort((s) => ({
       column: col,
       direction: s.column === col && s.direction === 'asc' ? 'desc' : 'asc',
@@ -313,112 +312,99 @@ export default function SearchPage() {
       model: '',
       yearFrom: '',
       yearTo: '',
+      dateFrom: '',
+      dateTo: '',
       wovr_status: '',
       sale_status: '',
-      incident_type_multi: [],
+      incident_types: [],
       priceMin: '',
       priceMax: '',
       auction_house: '',
       state: '',
-      dateFrom: '',
-      dateTo: '',
     });
     setPage(1);
   }
 
-  /** ----- cell renderers ----- */
+  // Helper: render a WOVR badge for known statuses
+  function renderWovrBadge(raw: unknown) {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    const key = raw
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
 
-  function renderWovrCell(v: string) {
-    if (!v) return '—';
-    const map: Record<string, string> = {
-      'Statutory Write-Off': '/staticon.png',
-      'Repairable Write-Off': '/repairicon.png',
-      'WOVR N/A': '/wovrnaicon.png',
-      'Inspection Passed Repairable Writeoff': '/inspectedicon.png',
-    };
-    const src = map[v];
-    if (!src) return v;
-    return <img src={src} alt={v} width={88} height={28} style={{ display: 'inline-block' }} />;
-  }
+    let src = '';
+    let alt = '';
 
-  function renderOutcomeCell(v: string) {
-    if (!v) return '—';
-    if (v.toUpperCase() === 'SOLD') {
-      return <img src="/soldicon.webp" alt="SOLD" width={68} height={24} style={{ display: 'inline-block' }} />;
+    switch (key) {
+      case 'statutory write off':
+        src = '/staticon.png';
+        alt = 'Statutory Write-off';
+        break;
+      case 'repairable write off':
+        src = '/repairicon.png';
+        alt = 'Repairable Write-off';
+        break;
+      case 'wovr na':
+      case 'wovr n a':
+        src = '/wovrnaicon.png';
+        alt = 'WOVR N/A';
+        break;
+      case 'inspection passed repairable writeoff':
+      case 'inspection passed repairable write off':
+        src = '/inspectedicon.png';
+        alt = 'Inspection Passed Repairable Write-off';
+        break;
+      default:
+        return null;
     }
-    return v;
+
+    return (
+      <img
+        src={src}
+        alt={alt}
+        width={96}
+        height={28}
+        style={{ display: 'block', margin: '0 auto' }}
+      />
+    );
   }
 
-  function renderHouseCell(v: string) {
-    if (!v) return '—';
-    if (v.toLowerCase() === 'pickles') {
-      return <img src="/picon.png" alt="Pickles" width={16} height={16} style={{ display: 'inline-block' }} />;
-    }
-    return v;
-  }
-
-  // NEW: link renderer per your rule (hide if no date; show before cutoff; hide after +7 days)
+  // Link visibility: show until 7 days after auction_date (fallback to sold_date if needed)
   function renderLinkCell(r: any) {
-    const href = typeof r.url === 'string' ? r.url.trim() : '';
+    const href = typeof r.url === 'string' ? r.url : '';
     if (!href) return '—';
 
-    const ts = (d: any) => {
-      if (!d) return NaN;
-      const n = Date.parse(String(d));
-      return Number.isFinite(n) ? n : NaN;
-    };
+    const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
+    const refTs = Number.isFinite(auctionTs) ? auctionTs :
+                  (r.sold_date ? Date.parse(r.sold_date) : NaN);
 
-    const AUCTION = ts(r.auction_date);
-    const SOLD = ts(r.sold_date);
-
-    // If neither date exists, DO NOT show the link
-    if (!Number.isFinite(AUCTION) && !Number.isFinite(SOLD)) return '—';
-
-    if (Number.isFinite(AUCTION)) {
-      const cutoff = AUCTION + 7 * 24 * 60 * 60 * 1000;
-      if (Date.now() > cutoff) return '—';
+    if (!Number.isFinite(refTs)) {
+      // if we don't have any date, show the link (conservative)
       return (
         <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
           Link
         </a>
       );
     }
-    if (Number.isFinite(SOLD)) {
-      const cutoff = SOLD + 7 * 24 * 60 * 60 * 1000;
-      if (Date.now() > cutoff) return '—';
-      return (
-        <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
-          Link
-        </a>
-      );
-    }
-    return '—';
+
+    const cutoff = refTs + 7 * 24 * 60 * 60 * 1000; // +7 days
+    if (Date.now() > cutoff) return '—';
+
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+        Link
+      </a>
+    );
   }
-
-  function displayDate(r: any) {
-    const d = r.sold_date || r.auction_date;
-    if (!d) return '—';
-    const dt = new Date(d);
-    if (Number.isNaN(dt.getTime())) return '—';
-    return dt.toLocaleDateString();
-  }
-
-  // Damage multi-select menu state
-  const [showDamageMenu, setShowDamageMenu] = useState(false);
-
-  const damageLabel = useMemo(() => {
-    const n = filters.incident_type_multi.length;
-    if (n === 0) return 'All';
-    if (n === 1) return filters.incident_type_multi[0];
-    return `${n} selected`;
-  }, [filters.incident_type_multi]);
 
   return (
     <div className="min-h-screen">
       {/* Full-width brand bar with thin accent */}
       <header className="ww-header">
         <div className="ww-header__inner">
-          <div className="ww-logo text-2xl md:text-3xl font-black tracking-wide">WreckWatch</div>
+          <div className="ww-logo">WreckWatch</div>
           <ThemeToggleButton />
         </div>
       </header>
@@ -429,120 +415,153 @@ export default function SearchPage() {
         <div className="rounded-lg border p-4 mb-6 bg-[var(--card)]">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <Field label="VIN (exact)">
-              <input className="input" value={filters.vin} onChange={onInput('vin')} placeholder="e.g. MR0FZ22G401062065" />
+              <input
+                className="input"
+                value={filters.vin}
+                onChange={onInput('vin')}
+                placeholder="e.g. MR0FZ22G401062065"
+              />
             </Field>
 
             <Field label="Buyer number (exact)">
-              <input className="input" value={filters.buyer_no} onChange={onInput('buyer_no')} placeholder="e.g. B12345" />
+              <input
+                className="input"
+                value={filters.buyer_no}
+                onChange={onInput('buyer_no')}
+                placeholder="e.g. B12345"
+              />
             </Field>
 
             <Field label="Make">
-              <Select value={filters.make} onChange={onSelect('make')} options={opts.make} loading={optsLoading} />
+              <Select
+                value={filters.make}
+                onChange={onSelect('make')}
+                options={opts.make}
+                loading={optsLoading}
+              />
             </Field>
 
             <Field label="Model">
-              <Select value={filters.model} onChange={onSelect('model')} options={opts.model} loading={optsLoading} />
+              <Select
+                value={filters.model}
+                onChange={onSelect('model')}
+                options={opts.model}
+                loading={optsLoading}
+              />
             </Field>
 
             <Field label="Year (From)">
-              <input className="input" type="number" value={filters.yearFrom} onChange={onInput('yearFrom')} placeholder="e.g. 2015" />
+              <input
+                className="input"
+                type="number"
+                value={filters.yearFrom}
+                onChange={onInput('yearFrom')}
+                placeholder="e.g. 2015"
+              />
             </Field>
 
             <Field label="Year (To)">
-              <input className="input" type="number" value={filters.yearTo} onChange={onInput('yearTo')} placeholder="e.g. 2024" />
+              <input
+                className="input"
+                type="number"
+                value={filters.yearTo}
+                onChange={onInput('yearTo')}
+                placeholder="e.g. 2024"
+              />
+            </Field>
+
+            {/* Date range calendars */}
+            <Field label="Date (From)">
+              <input
+                className="input"
+                type="date"
+                value={filters.dateFrom}
+                onChange={onInput('dateFrom')}
+              />
+            </Field>
+
+            <Field label="Date (To)">
+              <input
+                className="input"
+                type="date"
+                value={filters.dateTo}
+                onChange={onInput('dateTo')}
+              />
             </Field>
 
             <Field label="WOVR Status">
-              <Select value={filters.wovr_status} onChange={onSelect('wovr_status')} options={opts.wovr_status} loading={optsLoading} />
+              <Select
+                value={filters.wovr_status}
+                onChange={onSelect('wovr_status')}
+                options={opts.wovr_status}
+                loading={optsLoading}
+              />
             </Field>
 
             <Field label="Sale Status">
-              <Select value={filters.sale_status} onChange={onSelect('sale_status')} options={opts.sale_status} loading={optsLoading} />
+              <Select
+                value={filters.sale_status}
+                onChange={onSelect('sale_status')}
+                options={opts.sale_status}
+                loading={optsLoading}
+              />
             </Field>
 
             {/* Damage multi-select */}
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-gray-600 dark:text-gray-300">Damage</span>
-              <button
-                type="button"
-                className="input flex items-center justify-between"
-                onClick={() => setShowDamageMenu((o) => !o)}
-              >
-                <span>{damageLabel}</span>
-                <span className="opacity-60">▾</span>
-              </button>
-              {showDamageMenu && (
-                <div className="mt-2 rounded-md border bg-[var(--card)] p-2 max-h-64 overflow-auto">
-                  <div className="flex items-center gap-2 p-2">
-                    <button
-                      className="btn"
-                      onClick={() => update('incident_type_multi', [])}
-                      disabled={optsLoading}
-                    >
-                      Clear All
-                    </button>
-                    <button
-                      className="btn"
-                      onClick={() => update('incident_type_multi', [...opts.incident_type])}
-                      disabled={optsLoading}
-                    >
-                      Select All
-                    </button>
-                  </div>
-                  <ul className="space-y-1">
-                    {opts.incident_type.map((opt) => {
-                      const checked = filters.incident_type_multi.includes(opt);
-                      return (
-                        <li key={opt} className="px-2 py-1">
-                          <label className="inline-flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(e) => {
-                                const next = new Set(filters.incident_type_multi);
-                                if (e.target.checked) next.add(opt);
-                                else next.delete(opt);
-                                update('incident_type_multi', Array.from(next));
-                              }}
-                            />
-                            <span>{opt}</span>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-            </label>
+            <Field label="Damage">
+              <MultiSelect
+                options={opts.incident_type}
+                value={filters.incident_types}
+                onChange={(arr) => update('incident_types', arr)}
+                disabled={optsLoading}
+              />
+            </Field>
 
             <Field label="Price Min">
-              <input className="input" type="number" value={filters.priceMin} onChange={onInput('priceMin')} placeholder="e.g. 1000" />
+              <input
+                className="input"
+                type="number"
+                value={filters.priceMin}
+                onChange={onInput('priceMin')}
+                placeholder="e.g. 1000"
+              />
             </Field>
 
             <Field label="Price Max">
-              <input className="input" type="number" value={filters.priceMax} onChange={onInput('priceMax')} placeholder="e.g. 50000" />
+              <input
+                className="input"
+                type="number"
+                value={filters.priceMax}
+                onChange={onInput('priceMax')}
+                placeholder="e.g. 50000"
+              />
             </Field>
 
             <Field label="Auction House">
-              <Select value={filters.auction_house} onChange={onSelect('auction_house')} options={opts.auction_house} loading={optsLoading} />
+              <Select
+                value={filters.auction_house}
+                onChange={onSelect('auction_house')}
+                options={opts.auction_house}
+                loading={optsLoading}
+              />
             </Field>
 
             <Field label="State">
-              <Select value={filters.state} onChange={onSelect('state')} options={opts.state} loading={optsLoading} />
-            </Field>
-
-            {/* Date range: matches SOLD or AUCTION dates */}
-            <Field label="Date (From)">
-              <input className="input" type="date" value={filters.dateFrom} onChange={onInput('dateFrom')} />
-            </Field>
-            <Field label="Date (To)">
-              <input className="input" type="date" value={filters.dateTo} onChange={onInput('dateTo')} />
+              <Select
+                value={filters.state}
+                onChange={onSelect('state')}
+                options={opts.state}
+                loading={optsLoading}
+              />
             </Field>
 
             <div className="flex items-end gap-2">
               <button
                 className="btn btn-accent"
-                onClick={() => { setPage(1); fetchData(); }}
+                onClick={() => {
+                  setPage(1);
+                  fetchData();
+                }}
                 disabled={loading}
               >
                 {loading ? 'Loading…' : 'Search'}
@@ -555,20 +574,41 @@ export default function SearchPage() {
         </div>
 
         {/* Results */}
-        <div className="rounded-lg border">
+        <div className="rounded-lg border bg-[var(--card)]">
           <div className="flex items-center justify-between p-4 border-b">
             <div className="text-sm">
-              Results <span className="ml-2 rounded-full bg-black/10 dark:bg-white/10 px-2 py-0.5">{total.toLocaleString()} items</span>
+              Results{' '}
+              <span className="ml-2 rounded-full bg-black/10 dark:bg-white/10 px-2 py-0.5">
+                {total.toLocaleString()} items
+              </span>
             </div>
             <div className="flex items-center gap-2">
-              <select className="input w-28" value={String(pageSize)} onChange={(e: SelectChange) => setPageSize(Number(e.target.value))}>
+              <select
+                className="input w-28"
+                value={String(pageSize)}
+                onChange={(e: SelectChange) => setPageSize(Number(e.target.value))}
+              >
                 {[10, 25, 50, 100].map((n) => (
                   <option key={n} value={String(n)}>{n} / page</option>
                 ))}
               </select>
-              <button className="btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>Prev</button>
-              <div className="text-sm tabular-nums">{page} / {totalPages}</div>
-              <button className="btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next</button>
+              <button
+                className="btn"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+              >
+                Prev
+              </button>
+              <div className="text-sm tabular-nums">
+                {page} / {totalPages}
+              </div>
+              <button
+                className="btn"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
+                Next
+              </button>
             </div>
           </div>
 
@@ -581,14 +621,16 @@ export default function SearchPage() {
                   {DISPLAY.map(({ id, label }) => (
                     <th
                       key={id}
-                      onClick={() => toggleSort(id === 'date_display' ? 'sold_date' : id)} // sort by sold_date when clicking "Date"
-                      className="px-3 py-2 text-left cursor-pointer"
-                      style={id === 'auction_house' ? { width: 64 } : id === 'link' ? { width: 80 } : undefined}
+                      data-col={id}
+                      onClick={() => toggleSort(id)}
+                      className={`px-3 py-2 text-left ${SORTABLE.has(id) ? 'cursor-pointer' : 'cursor-default'}`}
                     >
                       <div className="inline-flex items-center gap-2">
                         <span>{label}</span>
-                        {sort.column === id && (
-                          <span className="text-xs uppercase text-gray-500">{sort.direction}</span>
+                        {sort.column === id && SORTABLE.has(id) && (
+                          <span className="text-xs uppercase text-gray-500">
+                            {sort.direction}
+                          </span>
                         )}
                       </div>
                     </th>
@@ -598,43 +640,53 @@ export default function SearchPage() {
               <tbody>
                 {rows.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={DISPLAY.length} className="p-8 text-center text-gray-400">No results.</td>
+                    <td colSpan={DISPLAY.length} className="p-8 text-center text-gray-400">
+                      No results.
+                    </td>
                   </tr>
                 )}
                 {rows.map((r) => (
                   <tr key={r.id} className="border-t row-hover">
-                    {DISPLAY.map(({ id }) => {
-                      let content: any = r[id as keyof typeof r];
-
-                      if (id === 'sold_price' && r.sold_price != null) {
-                        content = `$${Number(r.sold_price).toLocaleString()}`;
-                      } else if (id === 'vin') {
-                        content = <span className="vin">{r.vin}</span>;
-                      } else if (id === 'wovr_status') {
-                        content = renderWovrCell(r.wovr_status);
-                      } else if (id === 'sale_status') {
-                        content = renderOutcomeCell(r.sale_status);
-                      } else if (id === 'auction_house') {
-                        content = renderHouseCell(r.auction_house);
-                      } else if (id === 'date_display') {
-                        content = displayDate(r);
-                      } else if (id === 'link') {
-                        content = renderLinkCell(r);
-                      } else if (content == null || content === '') {
-                        content = '—';
-                      }
-
-                      return (
-                        <td
-                          key={id}
-                          className="px-3 py-2"
-                          data-col={id}
-                          style={id === 'auction_house' ? { width: 64 } : id === 'link' ? { width: 80 } : undefined}
-                        >
-                          {content}
-                        </td>
-                      );
-                    })}
+                    {DISPLAY.map(({ id }) => (
+                      <td key={id} className="px-3 py-2" data-col={id}>
+                        {id === 'auction_house' ? (
+                          r.auction_house === 'Pickles' ? (
+                            <img
+                              src="/picon.png"
+                              alt="Pickles"
+                              width={18}
+                              height={18}
+                              style={{ display: 'block', margin: '0 auto' }}
+                            />
+                          ) : (r.auction_house ?? '—')
+                        ) : id === 'sale_status' ? (
+                          typeof r.sale_status === 'string' &&
+                          r.sale_status.trim().toUpperCase() === 'SOLD' ? (
+                            <img
+                              src="/soldicon.webp"
+                              alt="Sold"
+                              width={64}
+                              height={28}
+                              style={{ display: 'block', margin: '0 auto' }}
+                            />
+                          ) : (
+                            r.sale_status ?? '—'
+                          )
+                        ) : id === 'wovr_status' ? (
+                          renderWovrBadge(r.wovr_status) ?? (r.wovr_status ?? '—')
+                        ) : id === 'sold_date' && r.sold_date ? (
+                          new Date(r.sold_date).toLocaleDateString()
+                        ) : id === 'sold_price' && r.sold_price != null ? (
+                          `$${Number(r.sold_price).toLocaleString()}`
+                        ) : id === 'vin' ? (
+                          <span className="vin">{r[id]}</span>
+                        ) : id === 'link' ? (
+                          renderLinkCell(r)
+                        ) : (
+                          r[id] ?? '—'
+                        )}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
@@ -646,8 +698,8 @@ export default function SearchPage() {
       {/* Design tokens & component styles */}
       <style jsx global>{`
         :root {
-          --accent: #32cd32;
-          --background: 220 20% 97%;
+          --accent: #32cd32;                   /* lime brand */
+          --background: 220 20% 97%;           /* soft app canvas */
           --fg: #111111;
           --card: #ffffff;
           --border: rgba(0, 0, 0, 0.12);
@@ -681,17 +733,21 @@ export default function SearchPage() {
         .ww-header__inner {
           max-width: min(100vw - 24px, 1600px);
           margin: 0 auto;
-          padding: 10px 16px;
+          padding: 12px 16px;
           display: flex;
           align-items: center;
           justify-content: space-between;
         }
-        .ww-logo { font-weight: 900; letter-spacing: 0.2px; }
+        .ww-logo {
+          font-weight: 800;
+          letter-spacing: 0.2px;
+          font-size: 28px;
+        }
 
         .input {
           height: 38px;
           border: 1px solid var(--border);
-          border-radius: 10px;
+          border-radius: 8px;
           padding: 0 10px;
           background: var(--card);
           color: var(--fg);
@@ -717,6 +773,7 @@ export default function SearchPage() {
         .border { border-color: var(--border) !important; }
         .border-t { border-top-color: var(--border) !important; }
 
+        /* Sticky table header */
         table { border-collapse: separate; border-spacing: 0; }
         thead.sticky-header th {
           position: sticky;
@@ -726,15 +783,45 @@ export default function SearchPage() {
           border-bottom: 1px solid var(--border);
           box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0,0,0,0.04);
         }
+
         .row-hover:hover { background: var(--hover); }
 
-        /* VIN: same font as body, fixed to 17ch, no wrapping */
-        td[data-col="vin"] .vin { white-space: nowrap; }
-        td[data-col="vin"] { min-width: 17ch; max-width: 17ch; white-space: nowrap; }
+        /* HOUSE: narrow & centered */
+        td[data-col="auction_house"],
+        th[data-col="auction_house"] {
+          width: 56px;
+          min-width: 56px;
+          max-width: 56px;
+          text-align: center;
+        }
 
-        /* House column narrow; Link column narrow */
-        td[data-col="auction_house"] { width: 64px; }
-        td[data-col="link"] { width: 80px; text-align: left; }
+        /* OUTCOME & WOVR: center content so badges are tidy */
+        td[data-col="sale_status"], th[data-col="sale_status"],
+        td[data-col="wovr_status"], th[data-col="wovr_status"] {
+          text-align: center;
+        }
+
+        /* VIN: same font + fixed width for 17 chars */
+        td[data-col="vin"],
+        th[data-col="vin"] {
+          width: 20ch;
+          min-width: 20ch;
+          max-width: 20ch;
+          white-space: nowrap;
+        }
+        td[data-col="vin"] .vin {
+          font-family: inherit;
+          font-size: inherit;
+          letter-spacing: .02em;
+        }
+
+        /* LINK: narrow & centered */
+        td[data-col="link"], th[data-col="link"] {
+          width: 64px;
+          min-width: 64px;
+          max-width: 64px;
+          text-align: center;
+        }
       `}</style>
     </div>
   );
@@ -767,5 +854,89 @@ function Select({
         <option key={o} value={o}>{o}</option>
       ))}
     </select>
+  );
+}
+
+/** Minimal multi-select with checkboxes and an All/Clear affordance */
+function MultiSelect({
+  value,
+  onChange,
+  options,
+  disabled,
+}: {
+  value: string[];
+  onChange: (vals: string[]) => void;
+  options: string[];
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const toggle = (opt: string) => {
+    const set = new Set(value);
+    set.has(opt) ? set.delete(opt) : set.add(opt);
+    onChange(Array.from(set));
+  };
+
+  const label =
+    value.length === 0 ? 'All' :
+    value.length <= 3 ? value.join(', ') :
+    `${value.length} selected`;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className="input w-full text-left flex items-center justify-between"
+        onClick={() => !disabled && setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+      >
+        <span className="truncate">{label}</span>
+        <span className="ml-2">▾</span>
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-md border bg-[var(--card)] shadow max-h-64 overflow-auto p-2">
+          <div className="flex items-center justify-between px-1 pb-2">
+            <button
+              className="text-xs underline"
+              onClick={() => onChange([])}
+            >
+              Clear (All)
+            </button>
+            <button
+              className="text-xs underline"
+              onClick={() => onChange(options.slice(0, 50))}
+            >
+              Select many
+            </button>
+          </div>
+
+          {options.map((opt) => (
+            <label
+              key={opt}
+              className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--hover)] cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={value.includes(opt)}
+                onChange={() => toggle(opt)}
+              />
+              <span className="truncate">{opt}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
