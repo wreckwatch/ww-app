@@ -20,7 +20,7 @@ const DISPLAY = [
   { id: 'incident_type', label: 'Damage' },
   { id: 'sale_status',   label: 'Outcome' },
   { id: 'sold_price',    label: 'Amount' },
-  { id: 'sold_date',     label: 'Date' },
+  { id: 'sold_date',     label: 'Date' },   // filters below target this field
   { id: 'auction_house', label: 'House' },
   { id: 'buyer_number',  label: 'Buyer' },
   { id: 'state',         label: 'State' },
@@ -75,6 +75,9 @@ export default function SearchPage() {
     model: '',
     yearFrom: '',
     yearTo: '',
+    // NEW: date range (targets the "Date" column shown, i.e., sold_date from the view)
+    dateFrom: '', // YYYY-MM-DD
+    dateTo: '',   // YYYY-MM-DD
     wovr_status: '',
     sale_status: '',
     incident_type: '',
@@ -168,6 +171,16 @@ export default function SearchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.make]);
 
+  // Helpers: date bounds for the date picker values (interpret local, send ISO)
+  function toStartOfDayISO(d: string): string {
+    const dt = new Date(`${d}T00:00:00`);
+    return dt.toISOString();
+  }
+  function toEndOfDayISO(d: string): string {
+    const dt = new Date(`${d}T23:59:59.999`);
+    return dt.toISOString();
+  }
+
   // Fetch on changes (debounced)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
@@ -184,17 +197,20 @@ export default function SearchPage() {
     setError('');
     try {
       // Normalise ranges
-      let { yearFrom, yearTo, priceMin, priceMax } = debounced;
+      let { yearFrom, yearTo, priceMin, priceMax, dateFrom, dateTo } = debounced;
       if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) {
         [yearFrom, yearTo] = [yearTo, yearFrom];
       }
       if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) {
         [priceMin, priceMax] = [priceMax, priceMin];
       }
+      if (dateFrom && dateTo && dateFrom > dateTo) {
+        [dateFrom, dateTo] = [dateTo, dateFrom];
+      }
 
       let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), { count: 'exact' });
 
-      const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax };
+      const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax, dateFrom, dateTo };
 
       // VIN exact (case-insensitive)
       if (f.vin.trim()) q = q.ilike('vin', f.vin.trim());
@@ -212,6 +228,10 @@ export default function SearchPage() {
       if (f.priceMax) q = q.lte('sold_price', Number(f.priceMax));
       if (f.auction_house) q = q.eq('auction_house', f.auction_house);
       if (f.state) q = q.eq('state', f.state);
+
+      // NEW: Date range filter on "sold_date" from the view
+      if (f.dateFrom) q = q.gte('sold_date', toStartOfDayISO(f.dateFrom));
+      if (f.dateTo)   q = q.lte('sold_date', toEndOfDayISO(f.dateTo));
 
       const sortCol = SORTABLE.has(sort.column) ? sort.column : 'id';
       q = q.order(sortCol, { ascending: sort.direction === 'asc' });
@@ -249,6 +269,8 @@ export default function SearchPage() {
       model: '',
       yearFrom: '',
       yearTo: '',
+      dateFrom: '',
+      dateTo: '',
       wovr_status: '',
       sale_status: '',
       incident_type: '',
@@ -374,6 +396,25 @@ export default function SearchPage() {
                 value={filters.yearTo}
                 onChange={onInput('yearTo')}
                 placeholder="e.g. 2024"
+              />
+            </Field>
+
+            {/* NEW: Date range calendars */}
+            <Field label="Date (From)">
+              <input
+                className="input"
+                type="date"
+                value={filters.dateFrom}
+                onChange={onInput('dateFrom')}
+              />
+            </Field>
+
+            <Field label="Date (To)">
+              <input
+                className="input"
+                type="date"
+                value={filters.dateTo}
+                onChange={onInput('dateTo')}
               />
             </Field>
 
@@ -627,7 +668,7 @@ export default function SearchPage() {
         .ww-logo {
           font-weight: 800;
           letter-spacing: 0.2px;
-          font-size: 28px;               /* larger, bold brand */
+          font-size: 28px;
         }
 
         .input {
@@ -698,7 +739,7 @@ export default function SearchPage() {
         td[data-col="vin"] .vin {
           font-family: inherit;
           font-size: inherit;
-          letter-spacing: .02em; /* optional readability */
+          letter-spacing: .02em;
         }
       `}</style>
     </div>
