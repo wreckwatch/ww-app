@@ -24,10 +24,23 @@ const DISPLAY = [
   { id: 'auction_house', label: 'House' },
   { id: 'buyer_number',  label: 'Buyer' },
   { id: 'state',         label: 'State' },
+  // new, UI-only column (not a DB field)
+  { id: 'link',          label: 'Link' },
 ] as const;
 
-const QUERY_COLUMNS = ['id', ...DISPLAY.map(d => d.id)];
-const SORTABLE = new Set<string>([...DISPLAY.map(d => d.id), 'id']);
+// Query the real DB columns PLUS url & auction_date (used for link rules)
+const QUERY_COLUMNS = [
+  'id',
+  'url',
+  'auction_date',
+  ...DISPLAY.filter(d => d.id !== 'link').map(d => d.id),
+];
+
+// Sortable columns: everything except the UI-only "link"
+const SORTABLE = new Set<string>([
+  ...DISPLAY.filter(d => d.id !== 'link').map(d => d.id),
+  'id',
+]);
 
 /** debounce hook */
 function useDebounce<T>(val: T, ms = 400) {
@@ -79,7 +92,7 @@ export default function SearchPage() {
     dateTo: string;
     wovr_status: string;
     sale_status: string;
-    incident_types: string[]; // <- multi select
+    incident_types: string[]; // multi select
     priceMin: string;
     priceMax: string;
     auction_house: string;
@@ -95,7 +108,7 @@ export default function SearchPage() {
     dateTo: '',   // YYYY-MM-DD
     wovr_status: '',
     sale_status: '',
-    incident_types: [],        // <- multi
+    incident_types: [],
     priceMin: '',
     priceMax: '',
     auction_house: '',
@@ -241,7 +254,6 @@ export default function SearchPage() {
 
       // MULTI-SELECT: incident_types
       if (Array.isArray(f.incident_types) && f.incident_types.length > 0) {
-        // Expand base selections to include sub-variants, e.g. "Malicious" -> every opt that starts with "Malicious,"
         const allOpts = opts.incident_type ?? [];
         const expanded = new Set<string>();
         for (const sel of f.incident_types) {
@@ -285,7 +297,7 @@ export default function SearchPage() {
   }
 
   function toggleSort(col: string) {
-    if (!SORTABLE.has(col)) return;
+    if (!SORTABLE.has(col)) return;  // avoid sorting the Link UI column
     setSort((s) => ({
       column: col,
       direction: s.column === col && s.direction === 'asc' ? 'desc' : 'asc',
@@ -304,7 +316,7 @@ export default function SearchPage() {
       dateTo: '',
       wovr_status: '',
       sale_status: '',
-      incident_types: [], // reset
+      incident_types: [],
       priceMin: '',
       priceMax: '',
       auction_house: '',
@@ -356,6 +368,34 @@ export default function SearchPage() {
         height={28}
         style={{ display: 'block', margin: '0 auto' }}
       />
+    );
+  }
+
+  // Link visibility: show until 7 days after auction_date (fallback to sold_date if needed)
+  function renderLinkCell(r: any) {
+    const href = typeof r.url === 'string' ? r.url : '';
+    if (!href) return '—';
+
+    const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
+    const refTs = Number.isFinite(auctionTs) ? auctionTs :
+                  (r.sold_date ? Date.parse(r.sold_date) : NaN);
+
+    if (!Number.isFinite(refTs)) {
+      // if we don't have any date, show the link (conservative)
+      return (
+        <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+          Link
+        </a>
+      );
+    }
+
+    const cutoff = refTs + 7 * 24 * 60 * 60 * 1000; // +7 days
+    if (Date.now() > cutoff) return '—';
+
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+        Link
+      </a>
     );
   }
 
@@ -467,7 +507,7 @@ export default function SearchPage() {
               />
             </Field>
 
-            {/* NEW: Damage multi-select */}
+            {/* Damage multi-select */}
             <Field label="Damage">
               <MultiSelect
                 options={opts.incident_type}
@@ -583,11 +623,11 @@ export default function SearchPage() {
                       key={id}
                       data-col={id}
                       onClick={() => toggleSort(id)}
-                      className="px-3 py-2 text-left cursor-pointer"
+                      className={`px-3 py-2 text-left ${SORTABLE.has(id) ? 'cursor-pointer' : 'cursor-default'}`}
                     >
                       <div className="inline-flex items-center gap-2">
                         <span>{label}</span>
-                        {sort.column === id && (
+                        {sort.column === id && SORTABLE.has(id) && (
                           <span className="text-xs uppercase text-gray-500">
                             {sort.direction}
                           </span>
@@ -609,7 +649,6 @@ export default function SearchPage() {
                   <tr key={r.id} className="border-t row-hover">
                     {DISPLAY.map(({ id }) => (
                       <td key={id} className="px-3 py-2" data-col={id}>
-                        {/* House: Pickles icon */}
                         {id === 'auction_house' ? (
                           r.auction_house === 'Pickles' ? (
                             <img
@@ -620,7 +659,7 @@ export default function SearchPage() {
                               style={{ display: 'block', margin: '0 auto' }}
                             />
                           ) : (r.auction_house ?? '—')
-                        ) : /* Outcome: SOLD badge */ id === 'sale_status' ? (
+                        ) : id === 'sale_status' ? (
                           typeof r.sale_status === 'string' &&
                           r.sale_status.trim().toUpperCase() === 'SOLD' ? (
                             <img
@@ -633,7 +672,7 @@ export default function SearchPage() {
                           ) : (
                             r.sale_status ?? '—'
                           )
-                        ) : /* WOVR: icon badges */ id === 'wovr_status' ? (
+                        ) : id === 'wovr_status' ? (
                           renderWovrBadge(r.wovr_status) ?? (r.wovr_status ?? '—')
                         ) : id === 'sold_date' && r.sold_date ? (
                           new Date(r.sold_date).toLocaleDateString()
@@ -641,6 +680,8 @@ export default function SearchPage() {
                           `$${Number(r.sold_price).toLocaleString()}`
                         ) : id === 'vin' ? (
                           <span className="vin">{r[id]}</span>
+                        ) : id === 'link' ? (
+                          renderLinkCell(r)
                         ) : (
                           r[id] ?? '—'
                         )}
@@ -745,7 +786,7 @@ export default function SearchPage() {
 
         .row-hover:hover { background: var(--hover); }
 
-        /* HOUSE: make this column narrow and centered */
+        /* HOUSE: narrow & centered */
         td[data-col="auction_house"],
         th[data-col="auction_house"] {
           width: 56px;
@@ -760,7 +801,7 @@ export default function SearchPage() {
           text-align: center;
         }
 
-        /* VIN: same font as table + fixed width for 17 chars */
+        /* VIN: same font + fixed width for 17 chars */
         td[data-col="vin"],
         th[data-col="vin"] {
           width: 20ch;
@@ -772,6 +813,14 @@ export default function SearchPage() {
           font-family: inherit;
           font-size: inherit;
           letter-spacing: .02em;
+        }
+
+        /* LINK: narrow & centered */
+        td[data-col="link"], th[data-col="link"] {
+          width: 64px;
+          min-width: 64px;
+          max-width: 64px;
+          text-align: center;
         }
       `}</style>
     </div>
