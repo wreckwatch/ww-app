@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabaseClient';
 type InputChange = React.ChangeEvent<HTMLInputElement>;
 type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
-const TABLE = 'vehicles';
+const TABLE = 'vehicles_frontend';
 
 /** Locked result columns (order + labels) */
 const DISPLAY = [
