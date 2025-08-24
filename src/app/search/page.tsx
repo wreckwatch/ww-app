@@ -400,7 +400,7 @@ export default function SearchPage() {
             </Field>
 
             {/* NEW: Date range calendars */}
-            <Field label="Date (From)">
+            <Field label="Auction Date (From)">
               <input
                 className="input"
                 type="date"
@@ -409,7 +409,7 @@ export default function SearchPage() {
               />
             </Field>
 
-            <Field label="Date (To)">
+            <Field label="Auction Date (To)">
               <input
                 className="input"
                 type="date"
