@@ -687,7 +687,7 @@ export default function SearchPage() {
                             />
                           ) : r.auction_house === 'Manheim' ? (
                             <img
-                              src="/man-logo.png"
+                              src="/man-logo.jpg"
                               alt="Manheim"
                               width={18}
                               height={18}
