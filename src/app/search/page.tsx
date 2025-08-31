@@ -685,7 +685,17 @@ export default function SearchPage() {
                               height={18}
                               style={{ display: 'block', margin: '0 auto' }}
                             />
-                          ) : (r.auction_house ?? '—')
+                          ) : r.auction_house === 'Manheim' ? (
+                            <img
+                              src="/man-logo.png"
+                              alt="Manheim"
+                              width={18}
+                              height={18}
+                              style={{ display: 'block', margin: '0 auto' }}
+                            />
+                          ) : (
+                            r.auction_house ?? '—'
+                          )
                         ) : id === 'sale_status' ? (
                           typeof r.sale_status === 'string' &&
                           r.sale_status.trim().toUpperCase() === 'SOLD' ? (
