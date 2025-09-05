@@ -217,10 +217,9 @@ export default function SearchPage() {
       // Reverse map for filtering
       const reverse: Record<string, string[]> = {};
       wovrMap.forEach((set, canon) => {
-      reverse[canon] = Array.from(set);
+        reverse[canon] = Array.from(set);
       });
       setWovrVariantsMap(reverse);
-
 
       setOpts({
         make: (makeRes.data ?? []).map((r: any) => r.make),
@@ -433,6 +432,10 @@ export default function SearchPage() {
         src = '/inspectedicon.png';
         alt = 'Inspection Passed Repairable Write-off';
         break;
+      case 'inspected write off': // ← NEW: show same icon for Manheim “Inspected Write-off”
+        src = '/inspectedicon.png';
+        alt = 'Inspected Write-off';
+        break;
       default:
         return null;
     }
@@ -458,7 +461,7 @@ export default function SearchPage() {
     if (!href) return '—';
 
     const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
-    const soldTs    = r.sold_date    ? Date.parse(r.sold_date)    : NaN;
+    the soldTs    = r.sold_date    ? Date.parse(r.sold_date)    : NaN;
 
     if (!Number.isFinite(auctionTs) && !Number.isFinite(soldTs)) return '—';
     const refTs = Number.isFinite(auctionTs) ? auctionTs : soldTs;
