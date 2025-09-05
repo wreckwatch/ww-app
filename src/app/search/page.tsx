@@ -8,7 +8,7 @@ type SelectChange = React.ChangeEvent<HTMLSelectElement>;
 
 const TABLE = 'vehicles_frontend';
 
-/** Locked result columns (order + labels) */
+/** Columns shown (and order) */
 const DISPLAY = [
   { id: 'year',          label: 'Year' },
   { id: 'make',          label: 'Make' },
@@ -20,15 +20,14 @@ const DISPLAY = [
   { id: 'incident_type', label: 'Damage' },
   { id: 'sale_status',   label: 'Outcome' },
   { id: 'sold_price',    label: 'Amount' },
-  { id: 'sold_date',     label: 'Date' },   // FE uses coalesce(sold_date, auction_date)
+  { id: 'sold_date',     label: 'Date' },   // coalesce(sold_date, auction_date) in your view
   { id: 'auction_house', label: 'House' },
   { id: 'buyer_number',  label: 'Buyer' },
   { id: 'state',         label: 'State' },
-  // UI-only column
-  { id: 'link',          label: 'Link' },
+  { id: 'link',          label: 'Link' },   // UI-only
 ] as const;
 
-// Query the real DB columns PLUS url & auction_date (used for link rules)
+/** DB columns to fetch */
 const QUERY_COLUMNS = [
   'id',
   'url',
@@ -36,13 +35,13 @@ const QUERY_COLUMNS = [
   ...DISPLAY.filter(d => d.id !== 'link').map(d => d.id),
 ];
 
-// Sortable columns: everything except the UI-only "link"
+/** Sortable columns */
 const SORTABLE = new Set<string>([
   ...DISPLAY.filter(d => d.id !== 'link').map(d => d.id),
   'id',
 ]);
 
-/** debounce hook */
+/** Debounce helper */
 function useDebounce<T>(val: T, ms = 400) {
   const [v, setV] = useState(val);
   useEffect(() => {
@@ -55,7 +54,6 @@ function useDebounce<T>(val: T, ms = 400) {
 /** Theme toggle */
 function ThemeToggleButton() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
-
   useEffect(() => {
     try {
       const stored = localStorage.getItem('theme') as 'light' | 'dark' | null;
@@ -65,14 +63,12 @@ function ThemeToggleButton() {
       document.documentElement.classList.toggle('dark', initial === 'dark');
     } catch {}
   }, []);
-
   function toggle() {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
     document.documentElement.classList.toggle('dark', next === 'dark');
     try { localStorage.setItem('theme', next); } catch {}
   }
-
   return (
     <button className="btn btn-ghost" onClick={toggle} aria-label="Toggle theme">
       {theme === 'dark' ? '🌙 Dark' : '☀️ Light'}
@@ -80,7 +76,7 @@ function ThemeToggleButton() {
   );
 }
 
-/** Filters shape + single source of truth for “empty filters” */
+/** Filters shape */
 type Filters = {
   vin: string;
   buyer_no: string;
@@ -92,7 +88,7 @@ type Filters = {
   dateTo: string;
   wovr_status: string;
   sale_status: string;
-  incident_types: string[]; // multi select
+  incident_types: string[];
   priceMin: string;
   priceMax: string;
   auction_house: string;
@@ -119,7 +115,7 @@ const INITIAL_FILTERS: Filters = {
 
 type Sort = { column: string; direction: 'asc' | 'desc' };
 
-/** History snapshot includes scrollY and the VIN we drilled into for robust restore */
+/** History snapshot (includes scroll + anchor VIN) */
 type Snapshot = {
   filters: Filters;
   page: number;
@@ -128,6 +124,15 @@ type Snapshot = {
   scrollY: number;
   anchorVin?: string;
 };
+
+/** Resolve the element that actually scrolls this page */
+function getScroller(): Element & { scrollTop: number; scrollTo: (o: any) => void } {
+  // If your app uses a custom scroll container, return it here instead:
+  // const el = document.querySelector('#app-scroll') as HTMLElement | null;
+  // if (el) return el as any;
+  const el = document.scrollingElement || document.documentElement;
+  return el as any;
+}
 
 export default function SearchPage() {
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
@@ -149,23 +154,21 @@ export default function SearchPage() {
   });
   const [optsLoading, setOptsLoading] = useState(false);
 
-  // map of VIN -> total count in DB
   const [vinCounts, setVinCounts] = useState<Record<string, number>>({});
 
-  // Sorting/paging
   const [sort, setSort] = useState<Sort>({ column: 'sold_date', direction: 'desc' });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // Lightweight in-app history for VIN drilldowns (with scroll + anchor)
+  /** History stack for VIN drilldowns */
   const [history, setHistory] = useState<Snapshot[]>([]);
 
-  // Pending scroll restore and anchor after we render rows
+  /** Pending scroll restore info */
   const [restoreScrollY, setRestoreScrollY] = useState<number | null>(null);
   const [restoreAnchorVin, setRestoreAnchorVin] = useState<string | null>(null);
 
-  // Load dropdown options – uses your RPCs
+  /** Load dropdown options (your RPCs) */
   async function loadAllOptions(makeFilter?: string) {
     setOptsLoading(true);
     try {
@@ -202,10 +205,9 @@ export default function SearchPage() {
       setOptsLoading(false);
     }
   }
-
   useEffect(() => { loadAllOptions(); }, []);
 
-  // When make changes, update models list
+  /** Update model list when make changes */
   useEffect(() => {
     (async () => {
       if (!filters.make) {
@@ -224,7 +226,7 @@ export default function SearchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.make]);
 
-  // Helpers: date bounds for the date picker values (interpret local, send ISO)
+  /** Helpers: date bounds */
   function toStartOfDayISO(d: string): string {
     const dt = new Date(`${d}T00:00:00`);
     return dt.toISOString();
@@ -234,7 +236,7 @@ export default function SearchPage() {
     return dt.toISOString();
   }
 
-  // Fetch on changes (debounced)
+  /** Fetch data whenever filters/sort/page/pageSize change (debounced filters) */
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchData(); }, [debounced, sort, page, pageSize]);
 
@@ -251,8 +253,6 @@ export default function SearchPage() {
       setVinCounts({});
       return;
     }
-
-    // Up to 25 small HEAD queries; simple and reliable.
     const entries = await Promise.all(
       vins.map(async (v) => {
         const { count, error } = await supabase
@@ -263,7 +263,6 @@ export default function SearchPage() {
         return [v, count || 0] as const;
       })
     );
-
     const map: Record<string, number> = {};
     for (const [v, c] of entries) map[v] = c;
     setVinCounts(map);
@@ -273,27 +272,17 @@ export default function SearchPage() {
     setLoading(true);
     setError('');
     try {
-      // Normalise ranges
+      // normalize ranges
       let { yearFrom, yearTo, priceMin, priceMax, dateFrom, dateTo } = debounced;
-      if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) {
-        [yearFrom, yearTo] = [yearTo, yearFrom];
-      }
-      if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) {
-        [priceMin, priceMax] = [priceMax, priceMin];
-      }
-      if (dateFrom && dateTo && dateFrom > dateTo) {
-        [dateFrom, dateTo] = [dateTo, dateFrom];
-      }
+      if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) [yearFrom, yearTo] = [yearTo, yearFrom];
+      if (priceMin && priceMax && Number(priceMin) > Number(priceMax)) [priceMin, priceMax] = [priceMax, priceMin];
+      if (dateFrom && dateTo && dateFrom > dateTo) [dateFrom, dateTo] = [dateTo, dateFrom];
 
       let q = supabase.from(TABLE).select(QUERY_COLUMNS.join(','), { count: 'exact' });
-
       const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax, dateFrom, dateTo };
 
-      // VIN exact (case-insensitive)
       if (f.vin.trim()) q = q.ilike('vin', f.vin.trim());
-      // Buyer number exact (case-insensitive)
       if (f.buyer_no.trim()) q = q.ilike('buyer_number', f.buyer_no.trim());
-
       if (f.make) q = q.eq('make', f.make);
       if (f.model) q = q.eq('model', f.model);
       if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
@@ -301,7 +290,6 @@ export default function SearchPage() {
       if (f.wovr_status) q = q.eq('wovr_status', f.wovr_status);
       if (f.sale_status) q = q.eq('sale_status', f.sale_status);
 
-      // MULTI-SELECT: incident_types (prefix expansion)
       if (Array.isArray(f.incident_types) && f.incident_types.length > 0) {
         const allOpts = opts.incident_type ?? [];
         const expanded = new Set<string>();
@@ -321,7 +309,6 @@ export default function SearchPage() {
       if (f.auction_house) q = q.eq('auction_house', f.auction_house);
       if (f.state) q = q.eq('state', f.state);
 
-      // Date range filter on the view's sold_date (coalesce(sold_date, auction_date))
       if (f.dateFrom) q = q.gte('sold_date', toStartOfDayISO(f.dateFrom));
       if (f.dateTo)   q = q.lte('sold_date', toEndOfDayISO(f.dateTo));
 
@@ -337,7 +324,6 @@ export default function SearchPage() {
       setRows(data || []);
       setTotal(count || 0);
 
-      // After rows load, fetch per-VIN counts so we can show the ×N badge
       await fetchVinCounts(data || []);
     } catch (e: any) {
       setError(e.message || 'Failed to fetch');
@@ -360,88 +346,49 @@ export default function SearchPage() {
   function clearFilters() {
     setFilters(INITIAL_FILTERS);
     setPage(1);
-    setHistory([]); // clearing search also clears history
+    setHistory([]); // clear drilldown history
   }
 
-  // Helper: render a WOVR badge for known statuses
+  /** WOVR badge renderer */
   function renderWovrBadge(raw: unknown) {
     if (typeof raw !== 'string' || !raw.trim()) return null;
-    const key = raw
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    let src = '';
-    let alt = '';
-
+    const key = raw.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+    let src = '', alt = '';
     switch (key) {
-      case 'statutory write off':
-        src = '/staticon.png';
-        alt = 'Statutory Write-off';
-        break;
-      case 'repairable write off':
-        src = '/repairicon.png';
-        alt = 'Repairable Write-off';
-        break;
+      case 'statutory write off': src = '/staticon.png'; alt = 'Statutory Write-off'; break;
+      case 'repairable write off': src = '/repairicon.png'; alt = 'Repairable Write-off'; break;
       case 'wovr na':
-      case 'wovr n a':
-        src = '/wovrnaicon.png';
-        alt = 'WOVR N/A';
-        break;
+      case 'wovr n a': src = '/wovrnaicon.png'; alt = 'WOVR N/A'; break;
       case 'inspection passed repairable writeoff':
-      case 'inspection passed repairable write off':
-        src = '/inspectedicon.png';
-        alt = 'Inspection Passed Repairable Write-off';
-        break;
-      default:
-        return null;
+      case 'inspection passed repairable write off': src = '/inspectedicon.png'; alt = 'Inspection Passed Repairable Write-off'; break;
+      default: return null;
     }
-
-    return (
-      <img
-        src={src}
-        alt={alt}
-        width={96}
-        height={28}
-        style={{ display: 'block', margin: '0 auto' }}
-      />
-    );
+    return <img src={src} alt={alt} width={96} height={28} style={{ display: 'block', margin: '0 auto' }} />;
   }
 
-  /**
-   * Link visibility:
-   * - Hide if there is NO date at all (neither auction_date nor sold_date)
-   * - If there is a date, show the link up to 7 days after that date
-   */
+  /** Link visibility: show for 7 days after ref date */
   function renderLinkCell(r: any) {
     const href = typeof r.url === 'string' ? r.url : '';
     if (!href) return '—';
-
     const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
     const soldTs    = r.sold_date    ? Date.parse(r.sold_date)    : NaN;
-
     if (!Number.isFinite(auctionTs) && !Number.isFinite(soldTs)) return '—';
     const refTs = Number.isFinite(auctionTs) ? auctionTs : soldTs;
-    const cutoff = refTs + 7 * 24 * 60 * 60 * 1000; // +7 days
+    const cutoff = refTs + 7 * 24 * 60 * 60 * 1000;
     if (Date.now() > cutoff) return '—';
-
-    return (
-      <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
-        Link
-      </a>
-    );
+    return <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">Link</a>;
   }
 
-  // Click VIN counter: push current state (including scrollY and anchor VIN) to history, then focus on this VIN
+  /** Drilldown from VIN counter: save current view + scroll + anchor, then filter to that VIN */
   function focusVinAll(vin: string) {
     if (!vin) return;
-    setHistory(h => [...h, { filters, page, sort, pageSize, scrollY: window.scrollY, anchorVin: vin }]);
+    const scroller = getScroller();
+    setHistory(h => [...h, { filters, page, sort, pageSize, scrollY: scroller.scrollTop, anchorVin: vin }]);
     setPage(1);
     setFilters({ ...INITIAL_FILTERS, vin });
   }
 
-  // Back button: restore last snapshot (if any), then request a scroll restore after rows render
+  /** Back: restore previous snapshot and schedule scroll/anchor restore */
   function goBack() {
     setHistory(h => {
       if (h.length === 0) return h;
@@ -457,195 +404,98 @@ export default function SearchPage() {
     });
   }
 
-  // When we have a pending scroll restore and we're not loading, scroll (with anchor fallback)
+  /** Perform scroll restore after rows render (numeric first, anchor as robust fallback) */
   useEffect(() => {
     if (!loading && (restoreScrollY != null || restoreAnchorVin)) {
+      // Two rafs ensure layout has settled after React paint
       requestAnimationFrame(() => {
-        if (restoreScrollY != null) {
-          window.scrollTo({ top: restoreScrollY, behavior: 'auto' });
-          setRestoreScrollY(null);
-        }
-        if (restoreAnchorVin) {
-          const el = document.querySelector(`[data-vin="${CSS.escape(restoreAnchorVin)}"]`) as HTMLElement | null;
-          if (el) el.scrollIntoView({ block: 'center', inline: 'nearest' });
-          setRestoreAnchorVin(null);
-        }
+        requestAnimationFrame(() => {
+          const scroller = getScroller();
+          if (restoreScrollY != null) {
+            scroller.scrollTo({ top: restoreScrollY, behavior: 'auto' });
+            setRestoreScrollY(null);
+          }
+          if (restoreAnchorVin) {
+            const el = document.querySelector(`[data-vin="${CSS.escape(restoreAnchorVin)}"]`) as HTMLElement | null;
+            if (el) el.scrollIntoView({ block: 'center', inline: 'nearest' });
+            setRestoreAnchorVin(null);
+          }
+        });
       });
     }
   }, [rows, loading, restoreScrollY, restoreAnchorVin]);
 
   return (
     <div className="min-h-screen">
-      {/* Full-width brand bar with thin accent */}
+      {/* Header */}
       <header className="ww-header">
         <div className="ww-header__inner">
           <div className="ww-logo">WreckWatch</div>
-          {/* Back button is positioned next to Clear/Search in filter panel */}
           <ThemeToggleButton />
         </div>
       </header>
 
-      {/* Page container */}
+      {/* Page */}
       <div className="mx-auto w-full max-w-[min(100vw-24px,1600px)] p-6">
         {/* Filters */}
         <div className="rounded-lg border p-4 mb-6 bg-[var(--card)]">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <Field label="VIN (exact)">
-              <input
-                className="input"
-                value={filters.vin}
-                onChange={onInput('vin')}
-                placeholder="e.g. MR0FZ22G401062065"
-              />
+              <input className="input" value={filters.vin} onChange={onInput('vin')} placeholder="e.g. MR0FZ22G401062065" />
             </Field>
-
             <Field label="Buyer number (exact)">
-              <input
-                className="input"
-                value={filters.buyer_no}
-                onChange={onInput('buyer_no')}
-                placeholder="e.g. B12345"
-              />
+              <input className="input" value={filters.buyer_no} onChange={onInput('buyer_no')} placeholder="e.g. B12345" />
             </Field>
-
             <Field label="Make">
-              <Select
-                value={filters.make}
-                onChange={onSelect('make')}
-                options={opts.make}
-                loading={optsLoading}
-              />
+              <Select value={filters.make} onChange={onSelect('make')} options={opts.make} loading={optsLoading} />
             </Field>
-
             <Field label="Model">
-              <Select
-                value={filters.model}
-                onChange={onSelect('model')}
-                options={opts.model}
-                loading={optsLoading}
-              />
+              <Select value={filters.model} onChange={onSelect('model')} options={opts.model} loading={optsLoading} />
             </Field>
-
             <Field label="Year (From)">
-              <input
-                className="input"
-                type="number"
-                value={filters.yearFrom}
-                onChange={onInput('yearFrom')}
-                placeholder="e.g. 2015"
-              />
+              <input className="input" type="number" value={filters.yearFrom} onChange={onInput('yearFrom')} placeholder="e.g. 2015" />
             </Field>
-
             <Field label="Year (To)">
-              <input
-                className="input"
-                type="number"
-                value={filters.yearTo}
-                onChange={onInput('yearTo')}
-                placeholder="e.g. 2024"
-              />
+              <input className="input" type="number" value={filters.yearTo} onChange={onInput('yearTo')} placeholder="e.g. 2024" />
             </Field>
-
-            {/* Date range calendars */}
             <Field label="Auction Date (From)">
-              <input
-                className="input"
-                type="date"
-                value={filters.dateFrom}
-                onChange={onInput('dateFrom')}
-              />
+              <input className="input" type="date" value={filters.dateFrom} onChange={onInput('dateFrom')} />
             </Field>
-
             <Field label="Auction Date (To)">
-              <input
-                className="input"
-                type="date"
-                value={filters.dateTo}
-                onChange={onInput('dateTo')}
-              />
+              <input className="input" type="date" value={filters.dateTo} onChange={onInput('dateTo')} />
             </Field>
-
             <Field label="WOVR Status">
-              <Select
-                value={filters.wovr_status}
-                onChange={onSelect('wovr_status')}
-                options={opts.wovr_status}
-                loading={optsLoading}
-              />
+              <Select value={filters.wovr_status} onChange={onSelect('wovr_status')} options={opts.wovr_status} loading={optsLoading} />
             </Field>
-
             <Field label="Sale Status">
-              <Select
-                value={filters.sale_status}
-                onChange={onSelect('sale_status')}
-                options={opts.sale_status}
-                loading={optsLoading}
-              />
+              <Select value={filters.sale_status} onChange={onSelect('sale_status')} options={opts.sale_status} loading={optsLoading} />
             </Field>
-
-            {/* Damage multi-select */}
             <Field label="Damage">
-              <MultiSelect
-                options={opts.incident_type}
-                value={filters.incident_types}
-                onChange={(arr) => update('incident_types', arr)}
-                disabled={optsLoading}
-              />
+              <MultiSelect options={opts.incident_type} value={filters.incident_types} onChange={(arr) => update('incident_types', arr)} disabled={optsLoading} />
             </Field>
-
             <Field label="Price Min">
-              <input
-                className="input"
-                type="number"
-                value={filters.priceMin}
-                onChange={onInput('priceMin')}
-                placeholder="e.g. 1000"
-              />
+              <input className="input" type="number" value={filters.priceMin} onChange={onInput('priceMin')} placeholder="e.g. 1000" />
             </Field>
-
             <Field label="Price Max">
-              <input
-                className="input"
-                type="number"
-                value={filters.priceMax}
-                onChange={onInput('priceMax')}
-                placeholder="e.g. 50000"
-              />
+              <input className="input" type="number" value={filters.priceMax} onChange={onInput('priceMax')} placeholder="e.g. 50000" />
             </Field>
-
             <Field label="Auction House">
-              <Select
-                value={filters.auction_house}
-                onChange={onSelect('auction_house')}
-                options={opts.auction_house}
-                loading={optsLoading}
-              />
+              <Select value={filters.auction_house} onChange={onSelect('auction_house')} options={opts.auction_house} loading={optsLoading} />
             </Field>
-
             <Field label="State">
-              <Select
-                value={filters.state}
-                onChange={onSelect('state')}
-                options={opts.state}
-                loading={optsLoading}
-              />
+              <Select value={filters.state} onChange={onSelect('state')} options={opts.state} loading={optsLoading} />
             </Field>
 
-            {/* Action row: Search, Clear, Back (Back sits next to Clear) */}
+            {/* Actions */}
             <div className="flex items-end gap-2">
               <button
                 className="btn btn-accent"
-                onClick={() => {
-                  setPage(1);
-                  fetchData();
-                }}
+                onClick={() => { setPage(1); fetchData(); }}
                 disabled={loading}
               >
                 {loading ? 'Loading…' : 'Search'}
               </button>
-              <button className="btn" onClick={clearFilters} disabled={loading}>
-                Clear
-              </button>
+              <button className="btn" onClick={clearFilters} disabled={loading}>Clear</button>
               <button
                 className="btn"
                 onClick={goBack}
@@ -677,23 +527,9 @@ export default function SearchPage() {
                   <option key={n} value={String(n)}>{n} / page</option>
                 ))}
               </select>
-              <button
-                className="btn"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-              >
-                Prev
-              </button>
-              <div className="text-sm tabular-nums">
-                {page} / {totalPages}
-              </div>
-              <button
-                className="btn"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-              >
-                Next
-              </button>
+              <button className="btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>Prev</button>
+              <div className="text-sm tabular-nums">{page} / {totalPages}</div>
+              <button className="btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next</button>
             </div>
           </div>
 
@@ -713,9 +549,7 @@ export default function SearchPage() {
                       <div className="inline-flex items-center gap-2">
                         <span>{label}</span>
                         {sort.column === id && SORTABLE.has(id) && (
-                          <span className="text-xs uppercase text-gray-500">
-                            {sort.direction}
-                          </span>
+                          <span className="text-xs uppercase text-gray-500">{sort.direction}</span>
                         )}
                       </div>
                     </th>
@@ -725,9 +559,7 @@ export default function SearchPage() {
               <tbody>
                 {rows.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={DISPLAY.length} className="p-8 text-center text-gray-400">
-                      No results.
-                    </td>
+                    <td colSpan={DISPLAY.length} className="p-8 text-center text-gray-400">No results.</td>
                   </tr>
                 )}
                 {rows.map((r) => (
@@ -736,37 +568,16 @@ export default function SearchPage() {
                       <td key={id} className="px-3 py-2" data-col={id}>
                         {id === 'auction_house' ? (
                           r.auction_house === 'Pickles' ? (
-                            <img
-                              src="/picon.png"
-                              alt="Pickles"
-                              width={18}
-                              height={18}
-                              style={{ display: 'block', margin: '0 auto' }}
-                            />
+                            <img src="/picon.png" alt="Pickles" width={18} height={18} style={{ display: 'block', margin: '0 auto' }} />
                           ) : r.auction_house === 'Manheim' ? (
-                            <img
-                              src="/man-logo.png"
-                              alt="Manheim"
-                              width={18}
-                              height={18}
-                              style={{ display: 'block', margin: '0 auto' }}
-                            />
+                            <img src="/man-logo.png" alt="Manheim" width={18} height={18} style={{ display: 'block', margin: '0 auto' }} />
                           ) : (
                             r.auction_house ?? '—'
                           )
                         ) : id === 'sale_status' ? (
-                          typeof r.sale_status === 'string' &&
-                          r.sale_status.trim().toUpperCase() === 'SOLD' ? (
-                            <img
-                              src="/soldicon.webp"
-                              alt="Sold"
-                              width={64}
-                              height={28}
-                              style={{ display: 'block', margin: '0 auto' }}
-                            />
-                          ) : (
-                            r.sale_status ?? '—'
-                          )
+                          typeof r.sale_status === 'string' && r.sale_status.trim().toUpperCase() === 'SOLD' ? (
+                            <img src="/soldicon.webp" alt="Sold" width={64} height={28} style={{ display: 'block', margin: '0 auto' }} />
+                          ) : (r.sale_status ?? '—')
                         ) : id === 'wovr_status' ? (
                           renderWovrBadge(r.wovr_status) ?? (r.wovr_status ?? '—')
                         ) : id === 'sold_date' && r.sold_date ? (
@@ -775,7 +586,7 @@ export default function SearchPage() {
                           `$${Number(r.sold_price).toLocaleString()}`
                         ) : id === 'vin' ? (
                           <div className="flex items-center">
-                            {/* Anchor the VIN so we can scroll back to it */}
+                            {/* VIN anchor for robust scroll restore */}
                             <span className="vin vin-anchor" data-vin={r.vin}>{r.vin}</span>
                             {vinCounts[r.vin] > 1 && (
                               <button
@@ -802,11 +613,11 @@ export default function SearchPage() {
         </div>
       </div>
 
-      {/* Design tokens & component styles */}
+      {/* Styles */}
       <style jsx global>{`
         :root {
-          --accent: #32cd32;                   /* lime brand */
-          --background: 220 20% 97%;           /* soft app canvas */
+          --accent: #32cd32;
+          --background: 220 20% 97%;
           --fg: #111111;
           --card: #ffffff;
           --border: rgba(0, 0, 0, 0.12);
@@ -824,7 +635,6 @@ export default function SearchPage() {
         }
         html, body { background: hsl(var(--background)); color: var(--fg); }
 
-        /* Full width header */
         .ww-header {
           background: var(--card);
           border-bottom: 4px solid var(--accent);
@@ -845,105 +655,50 @@ export default function SearchPage() {
           align-items: center;
           justify-content: space-between;
         }
-        .ww-logo {
-          font-weight: 800;
-          letter-spacing: 0.2px;
-          font-size: 28px;
-        }
+        .ww-logo { font-weight: 800; letter-spacing: 0.2px; font-size: 28px; }
 
         .input {
-          height: 38px;
-          border: 1px solid var(--border);
-          border-radius: 8px;
-          padding: 0 10px;
-          background: var(--card);
-          color: var(--fg);
+          height: 38px; border: 1px solid var(--border); border-radius: 8px;
+          padding: 0 10px; background: var(--card); color: var(--fg);
         }
         .btn {
-          height: 36px;
-          padding: 0 12px;
-          border-radius: 10px;
-          border: 1px solid var(--border);
-          background: var(--card);
-          color: var(--fg);
+          height: 36px; padding: 0 12px; border-radius: 10px;
+          border: 1px solid var(--border); background: var(--card); color: var(--fg);
           transition: background .15s ease, border-color .15s ease;
         }
         .btn:hover { background: var(--hover); }
         .btn-ghost { background: transparent; }
-        .btn-accent {
-          background: var(--accent);
-          border-color: var(--accent);
-          color: #0a0a0a;
-          font-weight: 600;
-        }
+        .btn-accent { background: var(--accent); border-color: var(--accent); color: #0a0a0a; font-weight: 600; }
 
         .border { border-color: var(--border) !important; }
         .border-t { border-top-color: var(--border) !important; }
 
-        /* Sticky table header */
         table { border-collapse: separate; border-spacing: 0; }
         thead.sticky-header th {
-          position: sticky;
-          top: 0;
-          z-index: 2;
-          background: var(--card);
+          position: sticky; top: 0; z-index: 2; background: var(--card);
           border-bottom: 1px solid var(--border);
           box-shadow: 0 1px 0 var(--border), 0 1px 6px rgba(0,0,0,0.04);
         }
-
         .row-hover:hover { background: var(--hover); }
 
-        /* HOUSE: narrow & centered */
-        td[data-col="auction_house"],
-        th[data-col="auction_house"] {
-          width: 56px;
-          min-width: 56px;
-          max-width: 56px;
-          text-align: center;
-        }
-
-        /* OUTCOME & WOVR: center content so badges are tidy */
+        td[data-col="auction_house"], th[data-col="auction_house"] { width: 56px; min-width: 56px; max-width: 56px; text-align: center; }
         td[data-col="sale_status"], th[data-col="sale_status"],
-        td[data-col="wovr_status"], th[data-col="wovr_status"] {
-          text-align: center;
-        }
+        td[data-col="wovr_status"], th[data-col="wovr_status"] { text-align: center; }
 
-        /* VIN: fixed width for 17 chars + badge */
-        td[data-col="vin"],
-        th[data-col="vin"] {
-          width: 24ch;
-          min-width: 24ch;
-          max-width: 24ch;
-          white-space: nowrap;
+        td[data-col="vin"], th[data-col="vin"] {
+          width: 24ch; min-width: 24ch; max-width: 24ch; white-space: nowrap;
         }
-        td[data-col="vin"] .vin {
-          font-family: inherit;
-          font-size: inherit;
-          letter-spacing: .02em;
-        }
-        /* VIN badge */
+        td[data-col="vin"] .vin { letter-spacing: .02em; }
+
         .vin-badge {
-          font-size: 11px;
-          line-height: 1;
-          padding: 3px 6px;
-          border-radius: 9999px;
-          border: 1px solid #edc001;
-          background: #ffed29;
-          color: #000000;
-          cursor: pointer;
-          margin-left: 8px;
+          font-size: 11px; line-height: 1; padding: 3px 6px; border-radius: 9999px;
+          border: 1px solid #edc001; background: #ffed29; color: #000; cursor: pointer; margin-left: 8px;
         }
 
-        /* Anchor: keep row visible beneath sticky header */
+        /* Anchor so sticky header doesn't cover the target row */
         .vin-anchor { scroll-margin-top: 80px; }
 
-        /* LINK: narrow & centered */
-        td[data-col="link"], th[data-col="link"] {
-          width: 64px;
-          min-width: 64px;
-          max-width: 64px;
-          text-align: center;
-        }
+        td[data-col="link"], th[data-col="link"] { width: 64px; min-width: 64px; max-width: 64px; text-align: center; }
       `}</style>
     </div>
   );
@@ -972,14 +727,11 @@ function Select({
   return (
     <select className="input" value={value} onChange={onChange} disabled={loading}>
       <option value="">{loading ? 'Loading…' : 'All'}</option>
-      {options.map((o) => (
-        <option key={o} value={o}>{o}</option>
-      ))}
+      {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
   );
 }
 
-/** Minimal multi-select with checkboxes and an All/Clear affordance */
 function MultiSelect({
   value,
   onChange,
@@ -1030,24 +782,13 @@ function MultiSelect({
       {open && (
         <div className="absolute z-50 mt-1 w-full rounded-md border bg-[var(--card)] shadow max-h-64 overflow-auto p-2">
           <div className="flex items-center justify-between px-1 pb-2">
-            <button className="text-xs underline" onClick={() => onChange([])}>
-              Clear (All)
-            </button>
-            <button className="text-xs underline" onClick={() => onChange(options.slice(0, 50))}>
-              Select many
-            </button>
+            <button className="text-xs underline" onClick={() => onChange([])}>Clear (All)</button>
+            <button className="text-xs underline" onClick={() => onChange(options.slice(0, 50))}>Select many</button>
           </div>
 
           {options.map((opt) => (
-            <label
-              key={opt}
-              className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--hover)] cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                checked={value.includes(opt)}
-                onChange={() => toggle(opt)}
-              />
+            <label key={opt} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--hover)] cursor-pointer">
+              <input type="checkbox" checked={value.includes(opt)} onChange={() => toggle(opt)} />
               <span className="truncate">{opt}</span>
             </label>
           ))}
