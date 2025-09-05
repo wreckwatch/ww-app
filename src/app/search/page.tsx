@@ -59,7 +59,7 @@ function ThemeToggleButton() {
   useEffect(() => {
     try {
       const stored = localStorage.getItem('theme') as 'light' | 'dark' | null;
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       const initial = stored ?? (prefersDark ? 'dark' : 'light');
       setTheme(initial);
       document.documentElement.classList.toggle('dark', initial === 'dark');
@@ -118,7 +118,9 @@ const INITIAL_FILTERS: Filters = {
 };
 
 type Sort = { column: string; direction: 'asc' | 'desc' };
-type Snapshot = { filters: Filters; page: number; sort: Sort; pageSize: number };
+
+/** ⬇️ Extended to include scrollY for smooth restoration */
+type Snapshot = { filters: Filters; page: number; sort: Sort; pageSize: number; scrollY: number };
 
 export default function SearchPage() {
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
@@ -149,8 +151,11 @@ export default function SearchPage() {
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // Lightweight in-app history for VIN-counter drilldowns
+  // Lightweight in-app history for VIN-counter drilldowns (now with scrollY)
   const [history, setHistory] = useState<Snapshot[]>([]);
+
+  // ⬇️ When we restore a snapshot, we stash desired scrollY here and scroll after rows render
+  const [restoreScrollY, setRestoreScrollY] = useState<number | null>(null);
 
   // Load dropdown options – uses your RPCs
   async function loadAllOptions(makeFilter?: string) {
@@ -420,16 +425,15 @@ export default function SearchPage() {
     );
   }
 
-  // Click VIN counter: push current state to history, then focus on this VIN
+  // Click VIN counter: push current state (including scrollY) to history, then focus on this VIN
   function focusVinAll(vin: string) {
     if (!vin) return;
-    // snapshot BEFORE changing filters
-    setHistory(h => [...h, { filters, page, sort, pageSize }]);
+    setHistory(h => [...h, { filters, page, sort, pageSize, scrollY: window.scrollY }]); // ⬅ save scroll
     setPage(1);
     setFilters({ ...INITIAL_FILTERS, vin });
   }
 
-  // Back button: restore last snapshot (if any)
+  // Back button: restore last snapshot (if any), then request a scroll restore after rows render
   function goBack() {
     setHistory(h => {
       if (h.length === 0) return h;
@@ -439,9 +443,20 @@ export default function SearchPage() {
       setPage(snap.page);
       setSort(snap.sort);
       setPageSize(snap.pageSize);
+      setRestoreScrollY(snap.scrollY); // ⬅ schedule scroll restore
       return next;
     });
   }
+
+  // When we have a pending scroll restore and we're not loading, scroll
+  useEffect(() => {
+    if (restoreScrollY != null && !loading) {
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: restoreScrollY!, behavior: 'auto' });
+        setRestoreScrollY(null);
+      });
+    }
+  }, [rows, loading, restoreScrollY]);
 
   return (
     <div className="min-h-screen">
