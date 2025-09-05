@@ -117,6 +117,9 @@ const INITIAL_FILTERS: Filters = {
   state: '',
 };
 
+type Sort = { column: string; direction: 'asc' | 'desc' };
+type Snapshot = { filters: Filters; page: number; sort: Sort; pageSize: number };
+
 export default function SearchPage() {
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
   const debounced = useDebounce(filters, 400);
@@ -141,12 +144,13 @@ export default function SearchPage() {
   const [vinCounts, setVinCounts] = useState<Record<string, number>>({});
 
   // Sorting/paging
-  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' }>(
-    { column: 'sold_date', direction: 'desc' }
-  );
+  const [sort, setSort] = useState<Sort>({ column: 'sold_date', direction: 'desc' });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
+
+  // NEW: lightweight in-app history for VIN-counter drilldowns
+  const [history, setHistory] = useState<Snapshot[]>([]);
 
   // Load dropdown options – uses your RPCs
   async function loadAllOptions(makeFilter?: string) {
@@ -343,6 +347,7 @@ export default function SearchPage() {
   function clearFilters() {
     setFilters(INITIAL_FILTERS);
     setPage(1);
+    setHistory([]); // clearing search also clears history
   }
 
   // Helper: render a WOVR badge for known statuses
@@ -400,16 +405,13 @@ export default function SearchPage() {
     const href = typeof r.url === 'string' ? r.url : '';
     if (!href) return '—';
 
+    // NOTE: this simplified to always show link earlier; restoring robust version:
     const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
     const soldTs    = r.sold_date    ? Date.parse(r.sold_date)    : NaN;
 
-    // If both dates are missing, do not show a link
     if (!Number.isFinite(auctionTs) && !Number.isFinite(soldTs)) return '—';
-
-    // Prefer auction date; fall back to sold date if needed
     const refTs = Number.isFinite(auctionTs) ? auctionTs : soldTs;
     const cutoff = refTs + 7 * 24 * 60 * 60 * 1000; // +7 days
-
     if (Date.now() > cutoff) return '—';
 
     return (
@@ -419,11 +421,27 @@ export default function SearchPage() {
     );
   }
 
-  // Click VIN counter: clear ALL filters and focus on this VIN
+  // Click VIN counter: push current state to history, then focus on this VIN
   function focusVinAll(vin: string) {
     if (!vin) return;
+    // snapshot BEFORE changing filters
+    setHistory(h => [...h, { filters, page, sort, pageSize }]);
     setPage(1);
     setFilters({ ...INITIAL_FILTERS, vin });
+  }
+
+  // Back button: restore last snapshot (if any)
+  function goBack() {
+    setHistory(h => {
+      if (h.length === 0) return h;
+      const next = h.slice(0, -1);
+      const snap = h[h.length - 1];
+      setFilters(snap.filters);
+      setPage(snap.page);
+      setSort(snap.sort);
+      setPageSize(snap.pageSize);
+      return next;
+    });
   }
 
   return (
@@ -432,7 +450,18 @@ export default function SearchPage() {
       <header className="ww-header">
         <div className="ww-header__inner">
           <div className="ww-logo">WreckWatch</div>
-          <ThemeToggleButton />
+          <div className="flex items-center gap-2">
+            {/* NEW Back button */}
+            <button
+              className="btn"
+              onClick={goBack}
+              disabled={history.length === 0 || loading}
+              title={history.length ? 'Back to previous results' : 'No previous view'}
+            >
+              ⟵ Back
+            </button>
+            <ThemeToggleButton />
+          </div>
         </div>
       </header>
 
