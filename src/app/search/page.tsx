@@ -457,22 +457,23 @@ export default function SearchPage() {
    * - If there is a date, show the link up to 7 days after that date
    */
   function renderLinkCell(r: any) {
-    const href = typeof r.url === 'string' ? r.url : '';
-    if (!href) return '—';
+const href = typeof r.url === 'string' ? r.url : '';
+if (!href) return '—';
 
-    const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
-    the soldTs    = r.sold_date    ? Date.parse(r.sold_date)    : NaN;
+const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
+const soldTs    = r.sold_date    ? Date.parse(r.sold_date)    : NaN;
 
-    if (!Number.isFinite(auctionTs) && !Number.isFinite(soldTs)) return '—';
-    const refTs = Number.isFinite(auctionTs) ? auctionTs : soldTs;
-    const cutoff = refTs + 7 * 24 * 60 * 60 * 1000; // +7 days
-    if (Date.now() > cutoff) return '—';
+if (!Number.isFinite(auctionTs) && !Number.isFinite(soldTs)) return '—';
+const refTs = Number.isFinite(auctionTs) ? auctionTs : soldTs;
+const cutoff = refTs + 7 * 24 * 60 * 60 * 1000;
+if (Date.now() > cutoff) return '—';
 
-    return (
-      <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
-        Link
-      </a>
-    );
+return (
+  <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+    Link
+  </a>
+);
+
   }
 
   // Click VIN counter: push current state to history, then focus on this VIN
