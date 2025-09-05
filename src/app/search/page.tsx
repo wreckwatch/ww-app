@@ -140,6 +140,9 @@ export default function SearchPage() {
   });
   const [optsLoading, setOptsLoading] = useState(false);
 
+  // NEW: keep a reverse map of canonical WOVR label -> list of raw DB variants
+  const [wovrVariantsMap, setWovrVariantsMap] = useState<Record<string, string[]>>({});
+
   // map of VIN -> total count in DB
   const [vinCounts, setVinCounts] = useState<Record<string, number>>({});
 
@@ -151,6 +154,22 @@ export default function SearchPage() {
 
   // Lightweight in-app history for VIN-counter drilldowns
   const [history, setHistory] = useState<Snapshot[]>([]);
+
+  // Helpers to normalize and canonicalize WOVR statuses
+  const norm = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+  const canonicalizeWovr = (raw: string): string => {
+    const n = norm(raw);
+    if (n === 'inspection passed repairable writeoff' || n === 'inspection passed repairable write off' || n === 'inspected write off') {
+      return 'Inspected Write-off';
+    }
+    if (n === 'repairable write off') return 'Repairable Write-off';
+    if (n === 'statutory write off') return 'Statutory Write-off';
+    if (n === 'wovr na' || n === 'wovr n a') return 'WOVR N/A';
+    // default: keep original casing
+    return raw;
+  };
 
   // Load dropdown options – uses your RPCs
   async function loadAllOptions(makeFilter?: string) {
@@ -176,9 +195,35 @@ export default function SearchPage() {
         supabase.rpc('distinct_incident_type'),
       ]);
 
+      // Build canonical options for WOVR (case-insensitive + dedup + merge “Inspection Passed …”)
+      const wovrMap = new Map<string, Set<string>>(); // canonical -> Set(raw variants)
+      for (const r of (wovrRes.data ?? [])) {
+        const raw = r.wovr_status as string;
+        if (!raw) continue;
+        const canon = canonicalizeWovr(raw);
+        if (!wovrMap.has(canon)) wovrMap.set(canon, new Set());
+        wovrMap.get(canon)!.add(raw);
+      }
+      // Ensure both "Inspection Passed Repairable Writeoff" variants are included under Inspected Write-off
+      const inspectedSet = wovrMap.get('Inspected Write-off') ?? new Set<string>();
+      inspectedSet.add('Inspection Passed Repairable Writeoff');
+      inspectedSet.add('Inspection Passed Repairable Write-off');
+      inspectedSet.add('Inspected Write-off');
+      wovrMap.set('Inspected Write-off', inspectedSet);
+
+      // Final dropdown options (sorted, “Inspection Passed …” not shown separately)
+      const wovrOptions = Array.from(wovrMap.keys()).sort((a, b) => a.localeCompare(b));
+
+      // Reverse map for filtering
+      const reverse: Record<string, string[]> = {};
+      for (const [canon, set] of wovrMap) {
+        reverse[canon] = Array.from(set);
+      }
+      setWovrVariantsMap(reverse);
+
       setOpts({
         make: (makeRes.data ?? []).map((r: any) => r.make),
-        wovr_status: (wovrRes.data ?? []).map((r: any) => r.wovr_status),
+        wovr_status: wovrOptions,
         sale_status: (saleRes.data ?? []).map((r: any) => r.sale_status),
         auction_house: (houseRes.data ?? []).map((r: any) => r.auction_house),
         state: (stateRes.data ?? []).map((r: any) => r.state),
@@ -285,7 +330,13 @@ export default function SearchPage() {
       if (f.model) q = q.eq('model', f.model);
       if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
       if (f.yearTo) q = q.lte('year', Number(f.yearTo));
-      if (f.wovr_status) q = q.eq('wovr_status', f.wovr_status);
+
+      // WOVR status: use canonical -> variants map (case-insensitive + merged)
+      if (f.wovr_status) {
+        const variants = wovrVariantsMap[f.wovr_status] ?? [f.wovr_status];
+        q = q.in('wovr_status', variants);
+      }
+
       if (f.sale_status) q = q.eq('sale_status', f.sale_status);
 
       // MULTI-SELECT: incident_types (prefix expansion)
