@@ -772,8 +772,8 @@ return (
                             <img
                               src="/man-logo.png"
                               alt="Manheim"
-                              width={18}
-                              height={18}
+                              width={22}
+                              height={22}
                               style={{ display: 'block', margin: '0 auto' }}
                             />
                           ) : (
