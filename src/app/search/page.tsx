@@ -216,10 +216,11 @@ export default function SearchPage() {
 
       // Reverse map for filtering
       const reverse: Record<string, string[]> = {};
-      for (const [canon, set] of wovrMap) {
-        reverse[canon] = Array.from(set);
-      }
+      wovrMap.forEach((set, canon) => {
+      reverse[canon] = Array.from(set);
+      });
       setWovrVariantsMap(reverse);
+
 
       setOpts({
         make: (makeRes.data ?? []).map((r: any) => r.make),
