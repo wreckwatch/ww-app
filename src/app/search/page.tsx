@@ -59,7 +59,7 @@ function ThemeToggleButton() {
   useEffect(() => {
     try {
       const stored = localStorage.getItem('theme') as 'light' | 'dark' | null;
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       const initial = stored ?? (prefersDark ? 'dark' : 'light');
       setTheme(initial);
       document.documentElement.classList.toggle('dark', initial === 'dark');
@@ -119,8 +119,15 @@ const INITIAL_FILTERS: Filters = {
 
 type Sort = { column: string; direction: 'asc' | 'desc' };
 
-/** ⬇️ Extended to include scrollY for smooth restoration */
-type Snapshot = { filters: Filters; page: number; sort: Sort; pageSize: number; scrollY: number };
+/** History snapshot includes scrollY and the VIN we drilled into for robust restore */
+type Snapshot = {
+  filters: Filters;
+  page: number;
+  sort: Sort;
+  pageSize: number;
+  scrollY: number;
+  anchorVin?: string;
+};
 
 export default function SearchPage() {
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
@@ -151,11 +158,12 @@ export default function SearchPage() {
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // Lightweight in-app history for VIN-counter drilldowns (now with scrollY)
+  // Lightweight in-app history for VIN drilldowns (with scroll + anchor)
   const [history, setHistory] = useState<Snapshot[]>([]);
 
-  // ⬇️ When we restore a snapshot, we stash desired scrollY here and scroll after rows render
+  // Pending scroll restore and anchor after we render rows
   const [restoreScrollY, setRestoreScrollY] = useState<number | null>(null);
+  const [restoreAnchorVin, setRestoreAnchorVin] = useState<string | null>(null);
 
   // Load dropdown options – uses your RPCs
   async function loadAllOptions(makeFilter?: string) {
@@ -425,10 +433,10 @@ export default function SearchPage() {
     );
   }
 
-  // Click VIN counter: push current state (including scrollY) to history, then focus on this VIN
+  // Click VIN counter: push current state (including scrollY and anchor VIN) to history, then focus on this VIN
   function focusVinAll(vin: string) {
     if (!vin) return;
-    setHistory(h => [...h, { filters, page, sort, pageSize, scrollY: window.scrollY }]); // ⬅ save scroll
+    setHistory(h => [...h, { filters, page, sort, pageSize, scrollY: window.scrollY, anchorVin: vin }]);
     setPage(1);
     setFilters({ ...INITIAL_FILTERS, vin });
   }
@@ -443,20 +451,28 @@ export default function SearchPage() {
       setPage(snap.page);
       setSort(snap.sort);
       setPageSize(snap.pageSize);
-      setRestoreScrollY(snap.scrollY); // ⬅ schedule scroll restore
+      setRestoreScrollY(snap.scrollY);
+      setRestoreAnchorVin(snap.anchorVin ?? null);
       return next;
     });
   }
 
-  // When we have a pending scroll restore and we're not loading, scroll
+  // When we have a pending scroll restore and we're not loading, scroll (with anchor fallback)
   useEffect(() => {
-    if (restoreScrollY != null && !loading) {
+    if (!loading && (restoreScrollY != null || restoreAnchorVin)) {
       requestAnimationFrame(() => {
-        window.scrollTo({ top: restoreScrollY!, behavior: 'auto' });
-        setRestoreScrollY(null);
+        if (restoreScrollY != null) {
+          window.scrollTo({ top: restoreScrollY, behavior: 'auto' });
+          setRestoreScrollY(null);
+        }
+        if (restoreAnchorVin) {
+          const el = document.querySelector(`[data-vin="${CSS.escape(restoreAnchorVin)}"]`) as HTMLElement | null;
+          if (el) el.scrollIntoView({ block: 'center', inline: 'nearest' });
+          setRestoreAnchorVin(null);
+        }
       });
     }
-  }, [rows, loading, restoreScrollY]);
+  }, [rows, loading, restoreScrollY, restoreAnchorVin]);
 
   return (
     <div className="min-h-screen">
@@ -464,7 +480,7 @@ export default function SearchPage() {
       <header className="ww-header">
         <div className="ww-header__inner">
           <div className="ww-logo">WreckWatch</div>
-          {/* Back moved out of the header */}
+          {/* Back button is positioned next to Clear/Search in filter panel */}
           <ThemeToggleButton />
         </div>
       </header>
@@ -729,7 +745,7 @@ export default function SearchPage() {
                             />
                           ) : r.auction_house === 'Manheim' ? (
                             <img
-                              src="/man-logo.jpg"
+                              src="/man-logo.png"
                               alt="Manheim"
                               width={18}
                               height={18}
@@ -759,7 +775,8 @@ export default function SearchPage() {
                           `$${Number(r.sold_price).toLocaleString()}`
                         ) : id === 'vin' ? (
                           <div className="flex items-center">
-                            <span className="vin">{r.vin}</span>
+                            {/* Anchor the VIN so we can scroll back to it */}
+                            <span className="vin vin-anchor" data-vin={r.vin}>{r.vin}</span>
                             {vinCounts[r.vin] > 1 && (
                               <button
                                 className="vin-badge"
@@ -916,6 +933,9 @@ export default function SearchPage() {
           cursor: pointer;
           margin-left: 8px;
         }
+
+        /* Anchor: keep row visible beneath sticky header */
+        .vin-anchor { scroll-margin-top: 80px; }
 
         /* LINK: narrow & centered */
         td[data-col="link"], th[data-col="link"] {
