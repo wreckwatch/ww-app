@@ -770,7 +770,7 @@ return (
                             />
                           ) : r.auction_house === 'Manheim' ? (
                             <img
-                              src="/man-logo.jpg"
+                              src="/man-logo.png"
                               alt="Manheim"
                               width={18}
                               height={18}
