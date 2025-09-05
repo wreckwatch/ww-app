@@ -221,6 +221,25 @@ export default function SearchPage() {
       });
       setWovrVariantsMap(reverse);
 
+      // ---------- DAMAGE OPTIONS WITH “(ALL) …” QUICK PICKS ----------
+      const damageRaw: string[] = (damageRes.data ?? [])
+        .map((r: any) => r.incident_type)
+        .filter(Boolean);
+
+      // collect unique tags from comma-separated variants
+      const tagSet = new Set<string>();
+      for (const opt of damageRaw) {
+        for (const t of opt.split(',').map((s: string) => s.trim()).filter(Boolean)) {
+          tagSet.add(t);
+        }
+      }
+      const allTags = Array.from(tagSet).sort((a, b) => a.localeCompare(b));
+      const damageAll = allTags.map(t => `(ALL) ${t}`);
+
+      // final Damage options: "(ALL) …" first, then raw DB variants
+      const damageOptions = [...damageAll, ...damageRaw];
+      // ---------------------------------------------------------------
+
       setOpts({
         make: (makeRes.data ?? []).map((r: any) => r.make),
         wovr_status: wovrOptions,
@@ -228,7 +247,7 @@ export default function SearchPage() {
         auction_house: (houseRes.data ?? []).map((r: any) => r.auction_house),
         state: (stateRes.data ?? []).map((r: any) => r.state),
         model: (modelRes.data ?? []).map((r: any) => r.model),
-        incident_type: (damageRes.data ?? []).map((r: any) => r.incident_type),
+        incident_type: damageOptions,
       });
     } finally {
       setOptsLoading(false);
@@ -339,20 +358,29 @@ export default function SearchPage() {
 
       if (f.sale_status) q = q.eq('sale_status', f.sale_status);
 
-      // MULTI-SELECT: incident_types (prefix expansion)
+      // ---------- DAMAGE "(ALL) …" EXPANSION ----------
       if (Array.isArray(f.incident_types) && f.incident_types.length > 0) {
         const allOpts = opts.incident_type ?? [];
+        const rawOpts = allOpts.filter(o => !o.startsWith('(ALL) ')); // DB values only
         const expanded = new Set<string>();
+
         for (const sel of f.incident_types) {
-          expanded.add(sel);
-          const prefix = sel.toLowerCase();
-          for (const opt of allOpts) {
-            const o = opt.toLowerCase();
-            if (o.startsWith(prefix + ',')) expanded.add(opt);
+          if (sel.startsWith('(ALL) ')) {
+            // Expand to ANY option that contains this tag (as a token anywhere)
+            const tag = sel.slice(6).trim().toLowerCase();
+            for (const opt of rawOpts) {
+              const tokens = opt.split(',').map(s => s.trim().toLowerCase());
+              if (tokens.includes(tag)) expanded.add(opt);
+            }
+          } else {
+            // Keep existing behavior: exact selection only
+            expanded.add(sel);
           }
         }
+
         q = q.in('incident_type', Array.from(expanded));
       }
+      // --------------------------------------------------
 
       if (f.priceMin) q = q.gte('sold_price', Number(f.priceMin));
       if (f.priceMax) q = q.lte('sold_price', Number(f.priceMax));
@@ -814,7 +842,7 @@ return (
                         ) : id === 'link' ? (
                           renderLinkCell(r)
                         ) : (
-                          r[id] ?? '—'
+                          r[id] ?? '—
                         )}
                       </td>
                     ))}
@@ -1000,7 +1028,7 @@ function Select({
   );
 }
 
-/** Minimal multi-select with checkboxes and an All/Clear affordance */
+/** Multi-select with "(ALL) …" group visually separated up top */
 function MultiSelect({
   value,
   onChange,
@@ -1029,6 +1057,9 @@ function MultiSelect({
     onChange(Array.from(set));
   };
 
+  const allOpts = options.filter(o => o.startsWith('(ALL) '));
+  const rawOpts = options.filter(o => !o.startsWith('(ALL) '));
+
   const label =
     value.length === 0 ? 'All' :
     value.length <= 3 ? value.join(', ') :
@@ -1054,12 +1085,43 @@ function MultiSelect({
             <button className="text-xs underline" onClick={() => onChange([])}>
               Clear (All)
             </button>
-            <button className="text-xs underline" onClick={() => onChange(options.slice(0, 50))}>
+            <button
+              className="text-xs underline"
+              onClick={() => onChange(rawOpts.slice(0, 50))}
+              title="Select many raw variants quickly"
+            >
               Select many
             </button>
           </div>
 
-          {options.map((opt) => (
+          {/* QUICK PICKS: "(ALL) …" */}
+          {allOpts.length > 0 && (
+            <>
+              <div className="px-2 pb-1 text-[11px] uppercase tracking-wide opacity-60">
+                Quick picks
+              </div>
+              {allOpts.map((opt) => (
+                <label
+                  key={opt}
+                  className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--hover)] cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={value.includes(opt)}
+                    onChange={() => toggle(opt)}
+                  />
+                  <span className="truncate font-medium">{opt}</span>
+                </label>
+              ))}
+              <div className="my-2 border-t" />
+            </>
+          )}
+
+          {/* RAW VARIANTS */}
+          <div className="px-2 pb-1 text-[11px] uppercase tracking-wide opacity-60">
+            Variants
+          </div>
+          {rawOpts.map((opt) => (
             <label
               key={opt}
               className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--hover)] cursor-pointer"
