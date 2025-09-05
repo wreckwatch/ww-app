@@ -842,7 +842,7 @@ return (
                         ) : id === 'link' ? (
                           renderLinkCell(r)
                         ) : (
-                          r[id] ?? '—
+                          r[id] ?? '—'
                         )}
                       </td>
                     ))}
