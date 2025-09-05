@@ -149,7 +149,7 @@ export default function SearchPage() {
   const [pageSize, setPageSize] = useState(25);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // NEW: lightweight in-app history for VIN-counter drilldowns
+  // Lightweight in-app history for VIN-counter drilldowns
   const [history, setHistory] = useState<Snapshot[]>([]);
 
   // Load dropdown options – uses your RPCs
@@ -405,7 +405,6 @@ export default function SearchPage() {
     const href = typeof r.url === 'string' ? r.url : '';
     if (!href) return '—';
 
-    // NOTE: this simplified to always show link earlier; restoring robust version:
     const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
     const soldTs    = r.sold_date    ? Date.parse(r.sold_date)    : NaN;
 
@@ -450,18 +449,8 @@ export default function SearchPage() {
       <header className="ww-header">
         <div className="ww-header__inner">
           <div className="ww-logo">WreckWatch</div>
-          <div className="flex items-center gap-2">
-            {/* NEW Back button */}
-            <button
-              className="btn"
-              onClick={goBack}
-              disabled={history.length === 0 || loading}
-              title={history.length ? 'Back to previous results' : 'No previous view'}
-            >
-              ⟵ Back
-            </button>
-            <ThemeToggleButton />
-          </div>
+          {/* Back moved out of the header */}
+          <ThemeToggleButton />
         </div>
       </header>
 
@@ -611,6 +600,7 @@ export default function SearchPage() {
               />
             </Field>
 
+            {/* Action row: Search, Clear, Back (Back sits next to Clear) */}
             <div className="flex items-end gap-2">
               <button
                 className="btn btn-accent"
@@ -624,6 +614,14 @@ export default function SearchPage() {
               </button>
               <button className="btn" onClick={clearFilters} disabled={loading}>
                 Clear
+              </button>
+              <button
+                className="btn"
+                onClick={goBack}
+                disabled={history.length === 0 || loading}
+                title={history.length ? 'Back to previous results' : 'No previous view'}
+              >
+                ⟵ Back
               </button>
             </div>
           </div>
