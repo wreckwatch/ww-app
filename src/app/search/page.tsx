@@ -129,6 +129,9 @@ type InsightsJson = {
   tags?: { tag: string; count: number }[];
 };
 
+type KpiStats = { count: number; min: number | null; max: number | null; avg: number | null; median: number | null };
+type GroupStats = Partial<Record<SeriesKey, KpiStats | null>>;
+
 function fmtMoney(n: number | null | undefined): string {
   if (n == null) return '—';
   return `$${Math.round(n).toLocaleString()}`;
@@ -361,12 +364,14 @@ function Kpi({ label, value }: { label: string; value: string }) {
 }
 
 function InsightsPanel({
-  insights, loading, requiredReady, monthlySeries,
+  insights, loading, requiredReady, monthlySeries, groupStats, wovrSelected,
 }: {
   insights: InsightsJson | null;
   loading: boolean;
   requiredReady: boolean; // make+model+year range present?
   monthlySeries: Record<SeriesKey, { t: number; avg: number }[]>;
+  groupStats: GroupStats;
+  wovrSelected: string; // blank = All
 }) {
   const [open, setOpen] = useState(true);
 
@@ -403,13 +408,42 @@ function InsightsPanel({
           {requiredReady && insights?.stats && (
             <>
               {/* KPIs */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-                <Kpi label="Count" value={String(insights.stats.count)} />
-                <Kpi label="Avg price" value={fmtMoney(insights.stats.avg)} />
-                <Kpi label="Median" value={fmtMoney(insights.stats.median)} />
-                <Kpi label="Min" value={fmtMoney(insights.stats.min)} />
-                <Kpi label="Max" value={fmtMoney(insights.stats.max)} />
-              </div>
+              {wovrSelected ? (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+                  <Kpi label="Count" value={String(insights.stats.count)} />
+                  <Kpi label="Avg price" value={fmtMoney(insights.stats.avg)} />
+                  <Kpi label="Median" value={fmtMoney(insights.stats.median)} />
+                  <Kpi label="Min" value={fmtMoney(insights.stats.min)} />
+                  <Kpi label="Max" value={fmtMoney(insights.stats.max)} />
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3 mb-4">
+                  {(['NONE','REPAIRABLE','INSPECTED','STATUTORY'] as SeriesKey[]).map((key) => {
+                    const meta = SERIES_META.find(m => m.key === key)!;
+                    const s = groupStats[key] || null;
+                    return (
+                      <div key={key} className="rounded border p-3">
+                        <div className="flex items-center gap-2 mb-2 text-sm">
+                          <span style={{ background: meta.color, width: 10, height: 10, borderRadius: 9999, display: 'inline-block' }} />
+                          <strong>{meta.label}</strong>
+                          <span className="opacity-60">— KPIs</span>
+                        </div>
+                        {s ? (
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                            <Kpi label="Count" value={String(s.count)} />
+                            <Kpi label="Avg price" value={fmtMoney(s.avg)} />
+                            <Kpi label="Median" value={fmtMoney(s.median)} />
+                            <Kpi label="Min" value={fmtMoney(s.min)} />
+                            <Kpi label="Max" value={fmtMoney(s.max)} />
+                          </div>
+                        ) : (
+                          <div className="text-sm opacity-60">No data for this group.</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Monthly averages trend */}
               <PriceTrendChart series={monthlySeries} />
@@ -812,10 +846,13 @@ export default function SearchPage() {
     NONE: [], REPAIRABLE: [], INSPECTED: [], STATUTORY: [],
   });
 
+  // Per-group KPI stats when WOVR = All
+  const [groupStats, setGroupStats] = useState<GroupStats>({});
+
   // derive damage filters from current selections
   function deriveDamageFilters() {
     const allOpts = opts.incident_type ?? [];
-    const rawOpts = allOpts.filter(o => !o.startsWith('(ALL) '));
+    the const rawOpts = allOpts.filter(o => !o.startsWith('(ALL) '));
     const tags = new Set<string>();
     const variants = new Set<string>();
     for (const sel of filters.incident_types) {
@@ -882,6 +919,65 @@ export default function SearchPage() {
     filters.vin, filters.buyer_no, filters.wovr_status,
     filters.sale_status, filters.priceMin, filters.priceMax,
     filters.incident_types, opts.incident_type,
+  ]);
+
+  // When WOVR is All, fetch KPI stats per WOVR group (4 calls)
+  useEffect(() => {
+    if (!requiredReady || filters.wovr_status) { setGroupStats({}); return; }
+
+    const { tags, variants } = deriveDamageFilters();
+
+    const CANON_LABEL: Record<SeriesKey, string> = {
+      NONE: 'WOVR N/A',
+      REPAIRABLE: 'Repairable Write-off',
+      INSPECTED: 'Inspected Write-off',
+      STATUTORY: 'Statutory Write-off',
+    };
+
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        (['NONE','REPAIRABLE','INSPECTED','STATUTORY'] as SeriesKey[]).map(async (k) => {
+          const label = CANON_LABEL[k];
+          const variantsArr = wovrVariantsMap[label] ?? [label];
+          const { data, error } = await supabase.rpc('ww_insights', {
+            p_make: filters.make,
+            p_model: filters.model,
+            p_year_from: Number(filters.yearFrom),
+            p_year_to: Number(filters.yearTo),
+            p_date_from: filters.dateFrom ? new Date(filters.dateFrom).toISOString() : null,
+            p_date_to:   filters.dateTo   ? new Date(filters.dateTo).toISOString()   : null,
+            p_auction_house: filters.auction_house || null,
+            p_state: filters.state || null,
+            p_damage_tags: tags.length ? tags : null,
+            p_damage_variants: variants.length ? variants : null,
+            p_vin: filters.vin ? filters.vin : null,
+            p_buyer_no: filters.buyer_no ? filters.buyer_no : null,
+            p_wovr_variants: variantsArr,
+            p_sale_status: filters.sale_status || null,
+            p_price_min: filters.priceMin ? Number(filters.priceMin) : null,
+            p_price_max: filters.priceMax ? Number(filters.priceMax) : null,
+          });
+          if (error || !data?.ok) return [k, null] as const;
+          return [k, data.stats as KpiStats] as const;
+        })
+      );
+      if (cancelled) return;
+      const next: GroupStats = {};
+      for (const [k, stats] of entries) next[k as SeriesKey] = stats;
+      setGroupStats(next);
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    requiredReady,
+    filters.make, filters.model, filters.yearFrom, filters.yearTo,
+    filters.dateFrom, filters.dateTo, filters.auction_house, filters.state,
+    filters.vin, filters.buyer_no, filters.sale_status,
+    filters.priceMin, filters.priceMax,
+    filters.incident_types, opts.incident_type,
+    wovrVariantsMap, filters.wovr_status,
   ]);
 
   // Fetch rows needed for monthly average chart & aggregate by month + WOVR group
@@ -1092,6 +1188,8 @@ export default function SearchPage() {
           loading={insightsLoading}
           requiredReady={requiredReady}
           monthlySeries={monthlySeries}
+          groupStats={groupStats}
+          wovrSelected={filters.wovr_status}
         />
 
         {/* Results */}
