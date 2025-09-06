@@ -183,11 +183,14 @@ function yyyymm(d: Date) { return `${d.getFullYear()}-${String(d.getMonth()+1).p
 function PriceTrendChart({
   series, height = 220,
 }: {
-  series: Record<SeriesKey, { t: number; avg: number }[]>;
+  series: Record<'NONE' | 'REPAIRABLE' | 'INSPECTED' | 'STATUTORY', { t: number; avg: number }[]>;
   height?: number;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const width = useSize(wrap);
+
+  // Tooltip state MUST be declared before any early return to satisfy Hooks rules
+  const [tip, setTip] = useState<{ x: number; y: number; label: string } | null>(null);
 
   // Collate domain across all visible series
   const allPoints = Object.values(series).flat();
@@ -206,20 +209,16 @@ function PriceTrendChart({
   const yMax = Math.max(...allPoints.map(d => d.avg));
 
   const yPad = Math.max(1, Math.round((yMax - yMin) * 0.08));
-  // never below $0
   const ymin = Math.max(0, yMin - yPad);
   const ymax = Math.max(yMin + 1, yMax + yPad);
 
-  // margins for axes
   const ml = 72, mr = 12, mt = 12, mb = 44;
   const W = Math.max(360, width || 760);
   const H = height;
 
-  // scales
   const x = (t: number) => ml + ((t - xMin) / Math.max(1, xMax - xMin)) * (W - ml - mr);
   const y = (v: number) => H - mb - ((v - ymin) / Math.max(1, ymax - ymin)) * (H - mt - mb);
 
-  // ticks
   const yStep = niceTickStep(ymin, ymax, 5);
   const yTicks: number[] = [];
   const yStart = Math.floor(ymin / yStep) * yStep;
@@ -231,8 +230,6 @@ function PriceTrendChart({
     return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
   };
 
-  // Tooltip (nearest point across all series)
-  const [tip, setTip] = useState<{ x: number; y: number; label: string } | null>(null);
   function onMove(e: React.MouseEvent<SVGSVGElement>) {
     const svg = (e.target as SVGElement).closest('svg')!;
     const rect = svg.getBoundingClientRect();
@@ -242,7 +239,7 @@ function PriceTrendChart({
     let best: { pt: { t: number; avg: number }; meta: (typeof SERIES_META)[number] } | null = null;
     let bestDist = Infinity;
     for (const meta of SERIES_META) {
-      const pts = series[meta.key];
+      const pts = series[meta.key as 'NONE' | 'REPAIRABLE' | 'INSPECTED' | 'STATUTORY'];
       if (!pts || pts.length === 0) continue;
       for (const p of pts) {
         const d = Math.abs(p.t - tGuess);
@@ -277,7 +274,6 @@ function PriceTrendChart({
         onMouseLeave={onLeave}
         style={{ display: 'block' }}
       >
-        {/* grid (y) */}
         {yTicks.map((v, i) => (
           <g key={`gy${i}`}>
             <line x1={ml} x2={W - mr} y1={y(v)} y2={y(v)} stroke="currentColor" opacity="0.08" />
@@ -287,7 +283,6 @@ function PriceTrendChart({
           </g>
         ))}
 
-        {/* grid (x) */}
         {xTicks.map((t, i) => (
           <g key={`gx${i}`}>
             <line x1={x(t)} x2={x(t)} y1={mt} y2={H - mb} stroke="currentColor" opacity="0.06" />
@@ -301,9 +296,8 @@ function PriceTrendChart({
           </g>
         ))}
 
-        {/* series lines + dots */}
         {SERIES_META.map(meta => {
-          const pts = series[meta.key];
+          const pts = series[meta.key as 'NONE' | 'REPAIRABLE' | 'INSPECTED' | 'STATUTORY'];
           if (!pts || pts.length === 0) return null;
           const path = pts.map((d, i) => `${i ? 'L' : 'M'}${x(d.t)},${y(d.avg)}`).join(' ');
           return (
@@ -316,7 +310,6 @@ function PriceTrendChart({
           );
         })}
 
-        {/* hover marker */}
         {tip && (
           <>
             <line x1={tip.x} x2={tip.x} y1={mt} y2={H - mb} stroke="currentColor" opacity="0.15" />
@@ -325,7 +318,6 @@ function PriceTrendChart({
         )}
       </svg>
 
-      {/* tooltip */}
       {tip && (
         <div
           style={{
@@ -342,6 +334,7 @@ function PriceTrendChart({
     </div>
   );
 }
+
 
 /* ---------- KPIs & tags ---------- */
 function Kpi({ label, value }: { label: string; value: string }) {
