@@ -170,7 +170,7 @@ function monthTicks(startMs: number, endMs: number) {
 }
 
 const SERIES_META = [
-  { key: 'NONE',       label: 'No WOVR',             color: '#27ae60' }, // green
+  { key: 'NONE',       label: 'No WOVR',              color: '#27ae60' }, // green
   { key: 'REPAIRABLE', label: 'Repairable Write-off', color: '#f1c40f' }, // yellow
   { key: 'INSPECTED',  label: 'Inspected Write-off',  color: '#3498db' }, // blue
   { key: 'STATUTORY',  label: 'Statutory Write-off',  color: '#e74c3c' }, // red
@@ -179,6 +179,17 @@ type SeriesKey = typeof SERIES_META[number]['key'];
 
 function dollars(n: number) { return `$${Math.round(n).toLocaleString()}`; }
 function yyyymm(d: Date) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+
+/** NEW: robust classifier for raw WOVR strings -> series key */
+function classifyWovr(raw: unknown): SeriesKey {
+  const s = typeof raw === 'string' ? raw : '';
+  const n = s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!n || n === 'wovr na' || n === 'wovr n a' || n === 'no wovr' || n === 'none') return 'NONE';
+  if (n.includes('statutory')) return 'STATUTORY';
+  if (n.includes('inspect')) return 'INSPECTED'; // “inspected write-off”, “inspection passed…”
+  if (n.includes('repair')) return 'REPAIRABLE'; // any “repairable …”
+  return 'NONE';
+}
 
 function PriceTrendChart({
   series, height = 220,
@@ -251,12 +262,15 @@ function PriceTrendChart({
   }
   function onLeave() { setTip(null); }
 
+  // Only show legend entries for series that actually have points
+  const legendMeta = SERIES_META.filter(m => (series[m.key as SeriesKey]?.length ?? 0) > 0);
+
   return (
     <div ref={wrap} className="rounded border p-3 relative">
       <div className="flex items-center justify-between mb-1">
         <div className="text-xs opacity-70">Monthly averages (filtered)</div>
         <div className="flex items-center gap-3">
-          {SERIES_META.map(m => (
+          {legendMeta.map(m => (
             <div key={m.key} className="flex items-center gap-1 text-xs opacity-80">
               <span style={{ background: m.color, width: 10, height: 10, borderRadius: 9999, display: 'inline-block' }} />
               {m.label}
@@ -474,12 +488,10 @@ export default function SearchPage() {
     s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
   const canonicalizeWovr = (raw: string): string => {
     const n = norm(raw);
-    if (n === 'inspection passed repairable writeoff' || n === 'inspection passed repairable write off' || n === 'inspected write off') {
-      return 'Inspected Write-off';
-    }
-    if (n === 'repairable write off') return 'Repairable Write-off';
-    if (n === 'statutory write off') return 'Statutory Write-off';
-    if (n === 'wovr na' || n === 'wovr n a') return 'WOVR N/A';
+    if (n.includes('inspect')) return 'Inspected Write-off';
+    if (n.includes('repair')) return 'Repairable Write-off';
+    if (n.includes('statutory')) return 'Statutory Write-off';
+    if (n === 'wovr na' || n === 'wovr n a' || n === 'no wovr') return 'WOVR N/A';
     return raw;
   };
 
@@ -516,12 +528,6 @@ export default function SearchPage() {
         if (!wovrMap.has(canon)) wovrMap.set(canon, new Set());
         wovrMap.get(canon)!.add(raw);
       }
-      const inspectedSet = wovrMap.get('Inspected Write-off') ?? new Set<string>();
-      inspectedSet.add('Inspection Passed Repairable Writeoff');
-      inspectedSet.add('Inspection Passed Repairable Write-off');
-      inspectedSet.add('Inspected Write-off');
-      wovrMap.set('Inspected Write-off', inspectedSet);
-
       const wovrOptions = Array.from(wovrMap.keys()).sort((a, b) => a.localeCompare(b));
       const reverse: Record<string, string[]> = {};
       wovrMap.forEach((set, canon) => { reverse[canon] = Array.from(set); });
@@ -899,7 +905,6 @@ export default function SearchPage() {
       if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
       if (f.yearTo) q = q.lte('year', Number(f.yearTo));
 
-      // IMPORTANT:
       // If a specific WOVR is selected, filter by its variants (single series).
       // If ALL is selected (blank), DO NOT filter by WOVR so we can build all 4 series.
       if (f.wovr_status) {
@@ -948,39 +953,22 @@ export default function SearchPage() {
         NONE: {}, REPAIRABLE: {}, INSPECTED: {}, STATUTORY: {},
       };
 
-      const mapToGroup = (raw: any): SeriesKey => {
-        const s = typeof raw === 'string' ? raw : '';
-        const canon = canonicalizeWovr(s);
-        const k = canon.toLowerCase();
-        if (k === 'statutory write off') return 'STATUTORY';
-        if (k === 'repairable write off') return 'REPAIRABLE';
-        if (k === 'inspected write off' || k === 'inspection passed repairable writeoff' || k === 'inspection passed repairable write off') return 'INSPECTED';
-        // treat empty or "WOVR N/A" or anything else as NONE
-        return 'NONE';
-      };
-
       for (const r of (data ?? [])) {
         const t = Date.parse(r.sold_date ?? r.auction_date);
         const p = typeof r.sold_price === 'number' ? r.sold_price : Number(r.sold_price);
         if (!Number.isFinite(t) || !Number.isFinite(p)) continue;
         const d = new Date(t);
         const key = yyyymm(d); // YYYY-MM
-        const group = mapToGroup(r.wovr_status);
+        const group = classifyWovr(r.wovr_status);
         const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
         if (!bucket[group][key]) bucket[group][key] = { sum: 0, n: 0, t: monthStart };
         bucket[group][key].sum += p;
         bucket[group][key].n += 1;
       }
 
-      // If a specific WOVR is selected, only keep that series
+      // Choose which series to keep
       const wantKeys: SeriesKey[] = filters.wovr_status
-        ? ((): SeriesKey[] => {
-            const sel = canonicalizeWovr(filters.wovr_status).toLowerCase();
-            if (sel === 'statutory write off') return ['STATUTORY'];
-            if (sel === 'repairable write off') return ['REPAIRABLE'];
-            if (sel === 'inspected write off')  return ['INSPECTED'];
-            return ['NONE'];
-          })()
+        ? [classifyWovr(filters.wovr_status)]
         : ['NONE', 'REPAIRABLE', 'INSPECTED', 'STATUTORY'];
 
       const out: Record<SeriesKey, { t: number; avg: number }[]> = { NONE: [], REPAIRABLE: [], INSPECTED: [], STATUTORY: [] };
@@ -988,7 +976,6 @@ export default function SearchPage() {
         const months = Object.values(bucket[key]).sort((a, b) => a.t - b.t);
         out[key] = months.map(m => ({ t: m.t, avg: m.sum / Math.max(1, m.n) }));
       }
-      // ensure empty for un-wanted
       for (const k of (['NONE','REPAIRABLE','INSPECTED','STATUTORY'] as SeriesKey[])) {
         if (!wantKeys.includes(k)) out[k] = [];
       }
