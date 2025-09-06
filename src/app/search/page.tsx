@@ -849,18 +849,19 @@ export default function SearchPage() {
   // Per-group KPI stats when WOVR = All
   const [groupStats, setGroupStats] = useState<GroupStats>({});
 
-  // derive damage filters from current selections
-  function deriveDamageFilters() {
-    const allOpts = opts.incident_type ?? [];
-    the const rawOpts = allOpts.filter(o => !o.startsWith('(ALL) '));
-    const tags = new Set<string>();
-    const variants = new Set<string>();
-    for (const sel of filters.incident_types) {
-      if (sel.startsWith('(ALL) ')) tags.add(sel.slice(6).trim());
-      else variants.add(sel);
-    }
-    return { tags: Array.from(tags), variants: Array.from(variants) };
+// derive damage filters from current selections
+function deriveDamageFilters() {
+  const allOpts = opts.incident_type ?? [];
+  const rawOpts = allOpts.filter(o => !o.startsWith('(ALL) '));
+  const tags = new Set<string>();
+  const variants = new Set<string>();
+  for (const sel of filters.incident_types) {
+    if (sel.startsWith('(ALL) ')) tags.add(sel.slice(6).trim());
+    else variants.add(sel);
   }
+  return { tags: Array.from(tags), variants: Array.from(variants) };
+}
+
 
   const requiredReady =
     !!filters.make && !!filters.model && !!filters.yearFrom && !!filters.yearTo;
