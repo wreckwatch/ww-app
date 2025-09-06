@@ -120,6 +120,146 @@ const INITIAL_FILTERS: Filters = {
 type Sort = { column: string; direction: 'asc' | 'desc' };
 type Snapshot = { filters: Filters; page: number; sort: Sort; pageSize: number };
 
+/* -------------------- INSIGHTS helpers & UI -------------------- */
+
+type InsightsJson = {
+  ok: boolean;
+  stats?: { count: number; min: number | null; max: number | null; avg: number | null; median: number | null };
+  trend?: { month: string; avg_price: number | null; n: number }[];
+  tags?: { tag: string; count: number }[];
+};
+
+function numberish(n: any): number | null {
+  const x = Number(n);
+  return Number.isFinite(x) ? x : null;
+}
+function fmtMoney(n: number | null | undefined): string {
+  if (n == null) return '—';
+  return `$${Math.round(n).toLocaleString()}`;
+}
+
+function Sparkline({ points, width = 280, height = 56 }: { points: number[]; width?: number; height?: number }) {
+  if (!points.length) return <div style={{height}} />;
+  const min = Math.min(...points), max = Math.max(...points);
+  const span = max - min || 1;
+  const step = points.length > 1 ? width / (points.length - 1) : width;
+  const path = points
+    .map((p, i) => {
+      const x = Math.round(i * step);
+      const y = Math.round(height - ((p - min) / span) * (height - 6) - 3);
+      return `${i ? 'L' : 'M'}${x},${y}`;
+    })
+    .join(' ');
+  return (
+    <svg width={width} height={height} style={{ display: 'block' }}>
+      <path d={path} fill="none" stroke="currentColor" strokeWidth="2" opacity="0.9" />
+    </svg>
+  );
+}
+
+function Kpi({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border p-3">
+      <div className="text-xs opacity-70">{label}</div>
+      <div className="text-lg font-semibold tabular-nums">{value}</div>
+    </div>
+  );
+}
+
+function InsightsPanel({
+  insights, loading, requiredReady,
+}: {
+  insights: InsightsJson | null;
+  loading: boolean;
+  requiredReady: boolean; // make+model+year range present?
+}) {
+  const [open, setOpen] = useState(true);
+
+  const points = (insights?.trend ?? [])
+    .filter(t => t.avg_price != null)
+    .map(t => Number(t.avg_price));
+
+  const top = (insights?.tags ?? []).slice(0, 10);
+  const topMax = top.length ? top[0].count : 1;
+
+  return (
+    <div className="rounded-lg border mb-6 bg-[var(--card)]">
+      <button
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+        onClick={() => setOpen(o => !o)}
+      >
+        <div className="font-semibold">Insights</div>
+        <div className="text-sm opacity-70">
+          {loading ? 'computing…' : (insights?.stats ? `${insights.stats.count.toLocaleString()} matches` : '')}
+          <span className="ml-2">{open ? '▴' : '▾'}</span>
+        </div>
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4">
+          {!requiredReady && (
+            <div className="text-sm opacity-70 p-3 rounded border">
+              Set <strong>Make</strong>, <strong>Model</strong>, and a <strong>Year range</strong> to view insights.
+            </div>
+          )}
+
+          {requiredReady && !insights && !loading && (
+            <div className="text-sm opacity-70 p-3 rounded border">
+              No data found for the selected filters.
+            </div>
+          )}
+
+          {requiredReady && insights?.stats && (
+            <>
+              {/* KPIs */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+                <Kpi label="Count" value={String(insights.stats.count)} />
+                <Kpi label="Avg price" value={fmtMoney(insights.stats.avg)} />
+                <Kpi label="Median" value={fmtMoney(insights.stats.median)} />
+                <Kpi label="Min" value={fmtMoney(insights.stats.min)} />
+                <Kpi label="Max" value={fmtMoney(insights.stats.max)} />
+              </div>
+
+              {/* Trend */}
+              <div className="rounded border p-3 mb-4">
+                <div className="text-xs opacity-70 mb-1">Average price by month</div>
+                <Sparkline points={points} />
+              </div>
+
+              {/* Top tags */}
+              <div className="rounded border p-3">
+                <div className="text-xs opacity-70 mb-2">Top damage tags</div>
+                <div className="flex flex-col gap-2">
+                  {top.length === 0 && <div className="text-sm opacity-60">No damage data</div>}
+                  {top.map(({ tag, count }) => (
+                    <div key={tag} className="flex items-center gap-2">
+                      <div className="w-40 truncate text-sm">{tag}</div>
+                      <div className="flex-1 h-2 rounded bg-[var(--muted)] overflow-hidden">
+                        <div
+                          className="h-2 bg-[var(--accent)]"
+                          style={{ width: `${Math.round((count / topMax) * 100)}%` }}
+                          title={`${tag}: ${count}`}
+                        />
+                      </div>
+                      <div className="w-8 text-right text-xs">{count}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="text-xs opacity-60 mt-3">
+                These aggregates are computed on the server (all filtered matches).
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -------------------- /INSIGHTS helpers & UI -------------------- */
+
 export default function SearchPage() {
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
   const debounced = useDebounce(filters, 400);
@@ -485,22 +625,22 @@ export default function SearchPage() {
    * - If there is a date, show the link up to 7 days after that date
    */
   function renderLinkCell(r: any) {
-const href = typeof r.url === 'string' ? r.url : '';
-if (!href) return '—';
+    const href = typeof r.url === 'string' ? r.url : '';
+    if (!href) return '—';
 
-const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
-const soldTs    = r.sold_date    ? Date.parse(r.sold_date)    : NaN;
+    const auctionTs = r.auction_date ? Date.parse(r.auction_date) : NaN;
+    const soldTs    = r.sold_date    ? Date.parse(r.sold_date)    : NaN;
 
-if (!Number.isFinite(auctionTs) && !Number.isFinite(soldTs)) return '—';
-const refTs = Number.isFinite(auctionTs) ? auctionTs : soldTs;
-const cutoff = refTs + 7 * 24 * 60 * 60 * 1000;
-if (Date.now() > cutoff) return '—';
+    if (!Number.isFinite(auctionTs) && !Number.isFinite(soldTs)) return '—';
+    const refTs = Number.isFinite(auctionTs) ? auctionTs : soldTs;
+    const cutoff = refTs + 7 * 24 * 60 * 60 * 1000;
+    if (Date.now() > cutoff) return '—';
 
-return (
-  <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
-    Link
-  </a>
-);
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+        Link
+      </a>
+    );
 
   }
 
@@ -526,6 +666,79 @@ return (
       return next;
     });
   }
+
+  /* -------------------- INSIGHTS: fetch when ready -------------------- */
+
+  const [insights, setInsights] = useState<InsightsJson | null>(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+
+  // derive damage filters from current selections
+  function deriveDamageFilters() {
+    const allOpts = opts.incident_type ?? [];
+    const rawOpts = allOpts.filter(o => !o.startsWith('(ALL) '));
+    const tags = new Set<string>();
+    const variants = new Set<string>();
+
+    for (const sel of filters.incident_types) {
+      if (sel.startsWith('(ALL) ')) {
+        tags.add(sel.slice(6).trim());
+      } else {
+        // ensure it's a raw variant we know about
+        if (rawOpts.includes(sel)) variants.add(sel);
+        else variants.add(sel);
+      }
+    }
+    return { tags: Array.from(tags), variants: Array.from(variants) };
+  }
+
+  const requiredReady =
+    !!filters.make && !!filters.model && !!filters.yearFrom && !!filters.yearTo;
+
+  useEffect(() => {
+    if (!requiredReady) { setInsights(null); return; }
+
+    const { tags, variants } = deriveDamageFilters();
+
+    setInsightsLoading(true);
+    let cancelled = false;
+
+    (async () => {
+      const { data, error } = await supabase.rpc('ww_insights', {
+        p_make: filters.make,
+        p_model: filters.model,
+        p_year_from: Number(filters.yearFrom),
+        p_year_to: Number(filters.yearTo),
+        p_date_from: filters.dateFrom ? new Date(filters.dateFrom).toISOString() : null,
+        p_date_to:   filters.dateTo   ? new Date(filters.dateTo).toISOString()   : null,
+        p_auction_house: filters.auction_house || null,
+        p_state: filters.state || null,
+        p_damage_tags: tags.length ? tags : null,
+        p_damage_variants: variants.length ? variants : null,
+      });
+
+      if (cancelled) return;
+      if (error) {
+        console.error('ww_insights error', error);
+        setInsights(null);
+      } else if (data?.ok) {
+        setInsights(data as InsightsJson);
+      } else {
+        setInsights(null);
+      }
+      setInsightsLoading(false);
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    requiredReady,
+    filters.make, filters.model, filters.yearFrom, filters.yearTo,
+    filters.dateFrom, filters.dateTo, filters.auction_house, filters.state,
+    filters.incident_types, // include damage selection changes
+    opts.incident_type,     // in case options refresh
+  ]);
+
+  /* -------------------- /INSIGHTS -------------------- */
 
   return (
     <div className="min-h-screen">
@@ -710,6 +923,9 @@ return (
             </div>
           </div>
         </div>
+
+        {/* Insights (collapsible) */}
+        <InsightsPanel insights={insights} loading={insightsLoading} requiredReady={requiredReady} />
 
         {/* Results */}
         <div className="rounded-lg border bg-[var(--card)]">
