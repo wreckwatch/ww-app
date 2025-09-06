@@ -699,6 +699,12 @@ export default function SearchPage() {
 
     const { tags, variants } = deriveDamageFilters();
 
+    // NEW: expand selected canonical WOVR into raw variants for the RPC
+    const wovrVariants =
+      filters.wovr_status
+        ? (wovrVariantsMap[filters.wovr_status] ?? [filters.wovr_status])
+        : null;
+
     setInsightsLoading(true);
     let cancelled = false;
 
@@ -708,12 +714,23 @@ export default function SearchPage() {
         p_model: filters.model,
         p_year_from: Number(filters.yearFrom),
         p_year_to: Number(filters.yearTo),
+
         p_date_from: filters.dateFrom ? new Date(filters.dateFrom).toISOString() : null,
         p_date_to:   filters.dateTo   ? new Date(filters.dateTo).toISOString()   : null,
+
         p_auction_house: filters.auction_house || null,
         p_state: filters.state || null,
+
         p_damage_tags: tags.length ? tags : null,
         p_damage_variants: variants.length ? variants : null,
+
+        // NEW: pass all remaining filters to the RPC
+        p_vin: filters.vin ? filters.vin : null,
+        p_buyer_no: filters.buyer_no ? filters.buyer_no : null,
+        p_wovr_variants: wovrVariants,
+        p_sale_status: filters.sale_status || null,
+        p_price_min: filters.priceMin ? Number(filters.priceMin) : null,
+        p_price_max: filters.priceMax ? Number(filters.priceMax) : null,
       });
 
       if (cancelled) return;
@@ -734,6 +751,8 @@ export default function SearchPage() {
     requiredReady,
     filters.make, filters.model, filters.yearFrom, filters.yearTo,
     filters.dateFrom, filters.dateTo, filters.auction_house, filters.state,
+    filters.vin, filters.buyer_no, filters.wovr_status,
+    filters.sale_status, filters.priceMin, filters.priceMax,
     filters.incident_types, // include damage selection changes
     opts.incident_type,     // in case options refresh
   ]);
@@ -932,7 +951,7 @@ export default function SearchPage() {
           <div className="flex items-center justify-between p-4 border-b">
             <div className="text-sm">
               Results{' '}
-              <span className="ml-2 rounded-full bg-black/10 dark:bg-white/10 px-2 py-0.5">
+              <span className="ml-2 rounded-full bg-black/10 dark:bg.white/10 px-2 py-0.5">
                 {total.toLocaleString()} items
               </span>
             </div>
@@ -1043,7 +1062,7 @@ export default function SearchPage() {
                         ) : id === 'sold_price' && r.sold_price != null ? (
                           `$${Number(r.sold_price).toLocaleString()}`
                         ) : id === 'vin' ? (
-                          <div className="flex items-center">
+                          <div className="flex items.center">
                             <span className="vin">{r.vin}</span>
                             {vinCounts[r.vin] > 1 && (
                               <button
@@ -1285,7 +1304,7 @@ function MultiSelect({
     <div className="relative" ref={ref}>
       <button
         type="button"
-        className="input w-full text-left flex items-center justify-between"
+        className="input w-full text.left flex items-center justify-between"
         onClick={() => !disabled && setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
