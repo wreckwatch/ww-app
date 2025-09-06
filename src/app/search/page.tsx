@@ -90,7 +90,7 @@ type Filters = {
   yearTo: string;
   dateFrom: string;
   dateTo: string;
-  wovr_status: string;
+  wovr_status: string;      // blank = ALL
   sale_status: string;
   incident_types: string[]; // multi select
   priceMin: string;
@@ -134,7 +134,7 @@ function fmtMoney(n: number | null | undefined): string {
   return `$${Math.round(n).toLocaleString()}`;
 }
 
-/* ---------- Responsive MONTHLY chart with dots + tooltip ---------- */
+/* ---------- Responsive MONTHLY trend (averages) with series ---------- */
 function useSize(ref: React.RefObject<HTMLElement>) {
   const [w, setW] = useState(0);
   useEffect(() => {
@@ -163,56 +163,61 @@ function monthTicks(startMs: number, endMs: number) {
   const out: number[] = [];
   const start = new Date(startMs);
   const end = new Date(endMs);
-  const d = new Date(start.getFullYear(), start.getMonth(), 1, 0, 0, 0, 0);
-  // move to next month boundary if start isn't the 1st
+  const d = new Date(start.getFullYear(), start.getMonth(), 1);
   if (start.getDate() !== 1) d.setMonth(d.getMonth() + 1);
-  while (d <= end) {
-    out.push(d.getTime());
-    d.setMonth(d.getMonth() + 1);
-  }
+  while (d <= end) { out.push(d.getTime()); d.setMonth(d.getMonth() + 1); }
   return out;
 }
 
-function dollars(n: number) { return `$${Math.round(n).toLocaleString()}`; }
+const SERIES_META = [
+  { key: 'NONE',       label: 'No WOVR',             color: '#27ae60' }, // green
+  { key: 'REPAIRABLE', label: 'Repairable Write-off', color: '#f1c40f' }, // yellow
+  { key: 'INSPECTED',  label: 'Inspected Write-off',  color: '#3498db' }, // blue
+  { key: 'STATUTORY',  label: 'Statutory Write-off',  color: '#e74c3c' }, // red
+] as const;
+type SeriesKey = typeof SERIES_META[number]['key'];
 
-function PriceDotsChart({
-  points, height = 210,
+function dollars(n: number) { return `$${Math.round(n).toLocaleString()}`; }
+function yyyymm(d: Date) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+
+function PriceTrendChart({
+  series, height = 220,
 }: {
-  points: { t: number; p: number }[];
+  series: Record<SeriesKey, { t: number; avg: number }[]>;
   height?: number;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const width = useSize(wrap);
 
-  // Tooltip state
-  const [tip, setTip] = useState<{ x: number; y: number; label: string } | null>(null);
+  // Collate domain across all visible series
+  const allPoints = Object.values(series).flat();
+  if (!allPoints.length) {
+    return (
+      <div ref={wrap} className="rounded border p-3">
+        <div className="text-xs opacity-70 mb-1">Monthly averages</div>
+        <div className="text-sm opacity-60">No price points</div>
+      </div>
+    );
+  }
 
-  if (!points.length) return (
-    <div ref={wrap} className="rounded border p-3">
-      <div className="text-xs opacity-70 mb-1">Price timeline (monthly)</div>
-      <div className="text-sm opacity-60">No price points</div>
-    </div>
-  );
+  const xMin = Math.min(...allPoints.map(d => d.t));
+  const xMax = Math.max(...allPoints.map(d => d.t));
+  const yMin = Math.min(...allPoints.map(d => d.avg));
+  const yMax = Math.max(...allPoints.map(d => d.avg));
 
-  // sort & domain
-  const pts = [...points].sort((a, b) => a.t - b.t);
-  const xMin = pts[0].t;
-  const xMax = pts[pts.length - 1].t;
-  const yMin = Math.min(...pts.map(d => d.p));
-  const yMax = Math.max(...pts.map(d => d.p));
   const yPad = Math.max(1, Math.round((yMax - yMin) * 0.08));
-  // never go below $0
+  // never below $0
   const ymin = Math.max(0, yMin - yPad);
   const ymax = Math.max(yMin + 1, yMax + yPad);
 
   // margins for axes
-  const ml = 64, mr = 12, mt = 12, mb = 40;
-  const W = Math.max(320, width || 720);
+  const ml = 72, mr = 12, mt = 12, mb = 44;
+  const W = Math.max(360, width || 760);
   const H = height;
 
   // scales
-  const x = (t: number) => ml + ( (t - xMin) / Math.max(1, xMax - xMin) ) * (W - ml - mr);
-  const y = (v: number) => H - mb - ( (v - ymin) / Math.max(1, ymax - ymin) ) * (H - mt - mb);
+  const x = (t: number) => ml + ((t - xMin) / Math.max(1, xMax - xMin)) * (W - ml - mr);
+  const y = (v: number) => H - mb - ((v - ymin) / Math.max(1, ymax - ymin)) * (H - mt - mb);
 
   // ticks
   const yStep = niceTickStep(ymin, ymax, 5);
@@ -221,40 +226,48 @@ function PriceDotsChart({
   for (let v = yStart; v <= ymax + 0.001; v += yStep) yTicks.push(v);
 
   const xTicks = monthTicks(xMin, xMax);
-
-  // line path (dotted like your screenshot)
-  const path = pts.map((d, i) => `${i ? 'L' : 'M'}${x(d.t)},${y(d.p)}`).join(' ');
-
-  // x labels (rotate)
   const fmtX = (t: number) => {
     const d = new Date(t);
     return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
   };
 
-  // Tooltip helpers (find nearest point)
+  // Tooltip (nearest point across all series)
+  const [tip, setTip] = useState<{ x: number; y: number; label: string } | null>(null);
   function onMove(e: React.MouseEvent<SVGSVGElement>) {
-    const rect = (e.target as SVGElement).closest('svg')!.getBoundingClientRect();
+    const svg = (e.target as SVGElement).closest('svg')!;
+    const rect = svg.getBoundingClientRect();
     const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-
-    // invert x: find t from mx
     const tGuess = xMin + ((mx - ml) / Math.max(1, W - ml - mr)) * (xMax - xMin);
 
-    // nearest by x (binary search would be fine; linear is OK for <= 2k)
-    let bestIdx = 0;
+    let best: { pt: { t: number; avg: number }; meta: (typeof SERIES_META)[number] } | null = null;
     let bestDist = Infinity;
-    for (let i = 0; i < pts.length; i++) {
-      const d = Math.abs(pts[i].t - tGuess);
-      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    for (const meta of SERIES_META) {
+      const pts = series[meta.key];
+      if (!pts || pts.length === 0) continue;
+      for (const p of pts) {
+        const d = Math.abs(p.t - tGuess);
+        if (d < bestDist) { bestDist = d; best = { pt: p, meta }; }
+      }
     }
-    const p = pts[bestIdx];
-    setTip({ x: x(p.t), y: y(p.p), label: dollars(p.p) });
+    if (!best) return setTip(null);
+    setTip({ x: x(best.pt.t), y: y(best.pt.avg), label: `${best.meta.label}: ${dollars(best.pt.avg)} (${fmtX(best.pt.t)})` });
   }
   function onLeave() { setTip(null); }
 
   return (
     <div ref={wrap} className="rounded border p-3 relative">
-      <div className="text-xs opacity-70 mb-1">Price timeline (monthly ticks)</div>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-xs opacity-70">Monthly averages (filtered)</div>
+        <div className="flex items-center gap-3">
+          {SERIES_META.map(m => (
+            <div key={m.key} className="flex items-center gap-1 text-xs opacity-80">
+              <span style={{ background: m.color, width: 10, height: 10, borderRadius: 9999, display: 'inline-block' }} />
+              {m.label}
+            </div>
+          ))}
+        </div>
+      </div>
+
       <svg
         width="100%"
         height={H}
@@ -268,7 +281,7 @@ function PriceDotsChart({
         {yTicks.map((v, i) => (
           <g key={`gy${i}`}>
             <line x1={ml} x2={W - mr} y1={y(v)} y2={y(v)} stroke="currentColor" opacity="0.08" />
-            <text x={ml - 8} y={y(v)} textAnchor="end" dominantBaseline="middle" fontSize="11" opacity="0.7">
+            <text x={ml - 10} y={y(v)} textAnchor="end" dominantBaseline="middle" fontSize="11" opacity="0.8">
               {dollars(v)}
             </text>
           </g>
@@ -281,22 +294,27 @@ function PriceDotsChart({
             <text
               x={x(t)} y={H - mb + 18}
               transform={`rotate(35 ${x(t)} ${H - mb + 18})`}
-              textAnchor="start" fontSize="10" opacity="0.7"
+              textAnchor="start" fontSize="10" opacity="0.8"
             >
               {fmtX(t)}
             </text>
           </g>
         ))}
 
-        {/* dotted line */}
-        <path d={path} fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.35" strokeDasharray="3 4" />
-
-        {/* dots */}
-        {pts.map((d, i) => (
-          <g key={`pt${i}`}>
-            <circle cx={x(d.t)} cy={y(d.p)} r={3} stroke="currentColor" fill="currentColor" />
-          </g>
-        ))}
+        {/* series lines + dots */}
+        {SERIES_META.map(meta => {
+          const pts = series[meta.key];
+          if (!pts || pts.length === 0) return null;
+          const path = pts.map((d, i) => `${i ? 'L' : 'M'}${x(d.t)},${y(d.avg)}`).join(' ');
+          return (
+            <g key={meta.key}>
+              <path d={path} fill="none" stroke={meta.color} strokeWidth="2" opacity="0.7" />
+              {pts.map((d, i) => (
+                <circle key={i} cx={x(d.t)} cy={y(d.avg)} r={3} fill={meta.color} stroke={meta.color} />
+              ))}
+            </g>
+          );
+        })}
 
         {/* hover marker */}
         {tip && (
@@ -312,7 +330,7 @@ function PriceDotsChart({
         <div
           style={{
             position: 'absolute',
-            left: Math.min(Math.max(tip.x + 8, 8), (wrap.current?.clientWidth ?? W) - 120),
+            left: Math.min(Math.max(tip.x + 8, 8), (wrap.current?.clientWidth ?? W) - 220),
             top: Math.max(tip.y - 28, 8),
             pointerEvents: 'none',
           }}
@@ -336,12 +354,12 @@ function Kpi({ label, value }: { label: string; value: string }) {
 }
 
 function InsightsPanel({
-  insights, loading, requiredReady, pricePoints,
+  insights, loading, requiredReady, monthlySeries,
 }: {
   insights: InsightsJson | null;
   loading: boolean;
   requiredReady: boolean; // make+model+year range present?
-  pricePoints: { t: number; p: number }[];
+  monthlySeries: Record<SeriesKey, { t: number; avg: number }[]>;
 }) {
   const [open, setOpen] = useState(true);
 
@@ -386,8 +404,8 @@ function InsightsPanel({
                 <Kpi label="Max" value={fmtMoney(insights.stats.max)} />
               </div>
 
-              {/* Monthly chart with dots + tooltip */}
-              <PriceDotsChart points={pricePoints} />
+              {/* Monthly averages trend */}
+              <PriceTrendChart series={monthlySeries} />
 
               {/* Top tags */}
               <div className="rounded border p-3 mt-4">
@@ -411,7 +429,7 @@ function InsightsPanel({
               </div>
 
               <div className="text-xs opacity-60 mt-3">
-                KPIs are server-side aggregates. Chart points are individual sales (max 2,000) for the selected filters.
+                KPIs are server-side aggregates. Trend is a monthly average computed on filtered matches.
               </div>
             </>
           )}
@@ -458,10 +476,9 @@ export default function SearchPage() {
   // Lightweight in-app history for VIN-counter drilldowns
   const [history, setHistory] = useState<Snapshot[]>([]);
 
-  // Helpers to normalize and canonicalize WOVR statuses
+  // Helpers to normalize/canonicalize WOVR
   const norm = (s: string) =>
     s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
-
   const canonicalizeWovr = (raw: string): string => {
     const n = norm(raw);
     if (n === 'inspection passed repairable writeoff' || n === 'inspection passed repairable write off' || n === 'inspected write off') {
@@ -470,7 +487,6 @@ export default function SearchPage() {
     if (n === 'repairable write off') return 'Repairable Write-off';
     if (n === 'statutory write off') return 'Statutory Write-off';
     if (n === 'wovr na' || n === 'wovr n a') return 'WOVR N/A';
-    // default: keep original casing
     return raw;
   };
 
@@ -498,7 +514,7 @@ export default function SearchPage() {
         supabase.rpc('distinct_incident_type'),
       ]);
 
-      // Build WOVR canonical options
+      // Build WOVR canonical options + reverse map
       const wovrMap = new Map<string, Set<string>>();
       for (const r of (wovrRes.data ?? [])) {
         const raw = r.wovr_status as string;
@@ -618,9 +634,7 @@ export default function SearchPage() {
 
       const f = { ...debounced, yearFrom, yearTo, priceMin, priceMax, dateFrom, dateTo };
 
-      // VIN exact (case-insensitive)
       if (f.vin.trim()) q = q.ilike('vin', f.vin.trim());
-      // Buyer number exact (case-insensitive)
       if (f.buyer_no.trim()) q = q.ilike('buyer_number', f.buyer_no.trim());
 
       if (f.make) q = q.eq('make', f.make);
@@ -628,7 +642,6 @@ export default function SearchPage() {
       if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
       if (f.yearTo) q = q.lte('year', Number(f.yearTo));
 
-      // WOVR status via canonical -> variants map
       if (f.wovr_status) {
         const variants = wovrVariantsMap[f.wovr_status] ?? [f.wovr_status];
         q = q.in('wovr_status', variants);
@@ -639,7 +652,7 @@ export default function SearchPage() {
       // DAMAGE "(ALL) …" expansion
       if (Array.isArray(f.incident_types) && f.incident_types.length > 0) {
         const allOpts = opts.incident_type ?? [];
-        const rawOpts = allOpts.filter(o => !o.startsWith('(ALL) ')); // DB values only
+        const rawOpts = allOpts.filter(o => !o.startsWith('(ALL) '));
         const expanded = new Set<string>();
         for (const sel of f.incident_types) {
           if (sel.startsWith('(ALL) ')) {
@@ -648,9 +661,7 @@ export default function SearchPage() {
               const tokens = opt.split(',').map(s => s.trim().toLowerCase());
               if (tokens.includes(tag)) expanded.add(opt);
             }
-          } else {
-            expanded.add(sel);
-          }
+          } else expanded.add(sel);
         }
         q = q.in('incident_type', Array.from(expanded));
       }
@@ -660,7 +671,6 @@ export default function SearchPage() {
       if (f.auction_house) q = q.eq('auction_house', f.auction_house);
       if (f.state) q = q.eq('state', f.state);
 
-      // Date range filter on the view's sold_date (coalesce(sold_date, auction_date))
       if (f.dateFrom) q = q.gte('sold_date', toStartOfDayISO(f.dateFrom));
       if (f.dateTo)   q = q.lte('sold_date', toEndOfDayISO(f.dateTo));
 
@@ -751,11 +761,7 @@ export default function SearchPage() {
     );
   }
 
-  /**
-   * Link visibility:
-   * - Hide if there is NO date at all (neither auction_date nor sold_date)
-   * - If there is a date, show the link up to 7 days after that date
-   */
+  /** Link visibility rules */
   function renderLinkCell(r: any) {
     const href = typeof r.url === 'string' ? r.url : '';
     if (!href) return '—';
@@ -773,7 +779,6 @@ export default function SearchPage() {
         Link
       </a>
     );
-
   }
 
   // Click VIN counter: push current state to history, then focus on this VIN
@@ -798,13 +803,15 @@ export default function SearchPage() {
     });
   }
 
-  /* -------------------- INSIGHTS: fetch when ready -------------------- */
+  /* -------------------- INSIGHTS: fetch & aggregate -------------------- */
 
   const [insights, setInsights] = useState<InsightsJson | null>(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
 
-  // points for the dot chart
-  const [pricePoints, setPricePoints] = useState<{ t: number; p: number }[]>([]);
+  // Monthly series (averages) per WOVR group
+  const [monthlySeries, setMonthlySeries] = useState<Record<SeriesKey, { t: number; avg: number }[]>>({
+    NONE: [], REPAIRABLE: [], INSPECTED: [], STATUTORY: [],
+  });
 
   // derive damage filters from current selections
   function deriveDamageFilters() {
@@ -814,10 +821,7 @@ export default function SearchPage() {
     const variants = new Set<string>();
     for (const sel of filters.incident_types) {
       if (sel.startsWith('(ALL) ')) tags.add(sel.slice(6).trim());
-      else {
-        if (rawOpts.includes(sel)) variants.add(sel);
-        else variants.add(sel);
-      }
+      else variants.add(sel);
     }
     return { tags: Array.from(tags), variants: Array.from(variants) };
   }
@@ -825,7 +829,7 @@ export default function SearchPage() {
   const requiredReady =
     !!filters.make && !!filters.model && !!filters.yearFrom && !!filters.yearTo;
 
-  // Fetch server-side aggregates
+  // Fetch server-side aggregates (KPIs, tags)
   useEffect(() => {
     if (!requiredReady) { setInsights(null); return; }
 
@@ -881,13 +885,16 @@ export default function SearchPage() {
     filters.incident_types, opts.incident_type,
   ]);
 
-  // Fetch individual sale points (client-side), capped
+  // Fetch rows needed for monthly average chart & aggregate by month + WOVR group
   useEffect(() => {
-    if (!requiredReady) { setPricePoints([]); return; }
+    if (!requiredReady) {
+      setMonthlySeries({ NONE: [], REPAIRABLE: [], INSPECTED: [], STATUTORY: [] });
+      return;
+    }
 
-    const fetchPoints = async () => {
-      // reuse same filter logic; only select the columns we need
-      let q = supabase.from(TABLE).select('sold_price,sold_date,auction_date', { count: 'exact' });
+    const fetchAndAggregate = async () => {
+      // select just what the chart needs
+      let q = supabase.from(TABLE).select('sold_price,sold_date,auction_date,wovr_status', { count: 'exact' });
 
       const f = filters;
 
@@ -899,10 +906,14 @@ export default function SearchPage() {
       if (f.yearFrom) q = q.gte('year', Number(f.yearFrom));
       if (f.yearTo) q = q.lte('year', Number(f.yearTo));
 
+      // IMPORTANT:
+      // If a specific WOVR is selected, filter by its variants (single series).
+      // If ALL is selected (blank), DO NOT filter by WOVR so we can build all 4 series.
       if (f.wovr_status) {
         const variants = wovrVariantsMap[f.wovr_status] ?? [f.wovr_status];
         q = q.in('wovr_status', variants);
       }
+
       if (f.sale_status) q = q.eq('sale_status', f.sale_status);
 
       if (Array.isArray(f.incident_types) && f.incident_types.length > 0) {
@@ -929,28 +940,70 @@ export default function SearchPage() {
       if (f.dateFrom) q = q.gte('sold_date', toStartOfDayISO(f.dateFrom));
       if (f.dateTo)   q = q.lte('sold_date', toEndOfDayISO(f.dateTo));
 
-      // reasonable cap to keep the SVG snappy
-      q = q.order('sold_date', { ascending: true }).limit(2000);
+      // cap for performance; averages are stable even with many rows
+      q = q.order('sold_date', { ascending: true }).limit(5000);
 
       const { data, error } = await q;
       if (error) {
-        console.error('price points error', error);
-        setPricePoints([]);
+        console.error('monthly series error', error);
+        setMonthlySeries({ NONE: [], REPAIRABLE: [], INSPECTED: [], STATUTORY: [] });
         return;
       }
 
-      const pts = (data ?? [])
-        .map((r: any) => {
-          const t = Date.parse(r.sold_date ?? r.auction_date);
-          const p = typeof r.sold_price === 'number' ? r.sold_price : Number(r.sold_price);
-          return Number.isFinite(t) && Number.isFinite(p) ? { t, p } : null;
-        })
-        .filter(Boolean) as { t: number; p: number }[];
+      // group -> month -> {sum,count}
+      const bucket: Record<SeriesKey, Record<string, { sum: number; n: number; t: number }>> = {
+        NONE: {}, REPAIRABLE: {}, INSPECTED: {}, STATUTORY: {},
+      };
 
-      setPricePoints(pts);
+      const mapToGroup = (raw: any): SeriesKey => {
+        const s = typeof raw === 'string' ? raw : '';
+        const canon = canonicalizeWovr(s);
+        const k = canon.toLowerCase();
+        if (k === 'statutory write off') return 'STATUTORY';
+        if (k === 'repairable write off') return 'REPAIRABLE';
+        if (k === 'inspected write off' || k === 'inspection passed repairable writeoff' || k === 'inspection passed repairable write off') return 'INSPECTED';
+        // treat empty or "WOVR N/A" or anything else as NONE
+        return 'NONE';
+      };
+
+      for (const r of (data ?? [])) {
+        const t = Date.parse(r.sold_date ?? r.auction_date);
+        const p = typeof r.sold_price === 'number' ? r.sold_price : Number(r.sold_price);
+        if (!Number.isFinite(t) || !Number.isFinite(p)) continue;
+        const d = new Date(t);
+        const key = yyyymm(d); // YYYY-MM
+        const group = mapToGroup(r.wovr_status);
+        const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+        if (!bucket[group][key]) bucket[group][key] = { sum: 0, n: 0, t: monthStart };
+        bucket[group][key].sum += p;
+        bucket[group][key].n += 1;
+      }
+
+      // If a specific WOVR is selected, only keep that series
+      const wantKeys: SeriesKey[] = filters.wovr_status
+        ? ((): SeriesKey[] => {
+            const sel = canonicalizeWovr(filters.wovr_status).toLowerCase();
+            if (sel === 'statutory write off') return ['STATUTORY'];
+            if (sel === 'repairable write off') return ['REPAIRABLE'];
+            if (sel === 'inspected write off')  return ['INSPECTED'];
+            return ['NONE'];
+          })()
+        : ['NONE', 'REPAIRABLE', 'INSPECTED', 'STATUTORY'];
+
+      const out: Record<SeriesKey, { t: number; avg: number }[]> = { NONE: [], REPAIRABLE: [], INSPECTED: [], STATUTORY: [] };
+      for (const key of wantKeys) {
+        const months = Object.values(bucket[key]).sort((a, b) => a.t - b.t);
+        out[key] = months.map(m => ({ t: m.t, avg: m.sum / Math.max(1, m.n) }));
+      }
+      // ensure empty for un-wanted
+      for (const k of (['NONE','REPAIRABLE','INSPECTED','STATUTORY'] as SeriesKey[])) {
+        if (!wantKeys.includes(k)) out[k] = [];
+      }
+
+      setMonthlySeries(out);
     };
 
-    fetchPoints();
+    fetchAndAggregate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     requiredReady,
@@ -1058,7 +1111,7 @@ export default function SearchPage() {
           insights={insights}
           loading={insightsLoading}
           requiredReady={requiredReady}
-          pricePoints={pricePoints}
+          monthlySeries={monthlySeries}
         />
 
         {/* Results */}
