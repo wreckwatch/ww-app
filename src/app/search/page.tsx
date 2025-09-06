@@ -134,7 +134,7 @@ function fmtMoney(n: number | null | undefined): string {
   return `$${Math.round(n).toLocaleString()}`;
 }
 
-/* ---------- Responsive bi-weekly chart with dots ---------- */
+/* ---------- Responsive MONTHLY chart with dots + tooltip ---------- */
 function useSize(ref: React.RefObject<HTMLElement>) {
   const [w, setW] = useState(0);
   useEffect(() => {
@@ -159,11 +159,17 @@ function niceTickStep(min: number, max: number, target = 6) {
   return best;
 }
 
-function biweeklyTicks(startMs: number, endMs: number) {
+function monthTicks(startMs: number, endMs: number) {
   const out: number[] = [];
-  const step = 14 * 24 * 60 * 60 * 1000;
-  const first = startMs - (startMs % step) + step; // align roughly to next 2-week boundary
-  for (let t = first; t <= endMs; t += step) out.push(t);
+  const start = new Date(startMs);
+  const end = new Date(endMs);
+  const d = new Date(start.getFullYear(), start.getMonth(), 1, 0, 0, 0, 0);
+  // move to next month boundary if start isn't the 1st
+  if (start.getDate() !== 1) d.setMonth(d.getMonth() + 1);
+  while (d <= end) {
+    out.push(d.getTime());
+    d.setMonth(d.getMonth() + 1);
+  }
   return out;
 }
 
@@ -178,9 +184,12 @@ function PriceDotsChart({
   const wrap = useRef<HTMLDivElement>(null);
   const width = useSize(wrap);
 
+  // Tooltip state
+  const [tip, setTip] = useState<{ x: number; y: number; label: string } | null>(null);
+
   if (!points.length) return (
     <div ref={wrap} className="rounded border p-3">
-      <div className="text-xs opacity-70 mb-1">Price timeline (bi-weekly)</div>
+      <div className="text-xs opacity-70 mb-1">Price timeline (monthly)</div>
       <div className="text-sm opacity-60">No price points</div>
     </div>
   );
@@ -192,8 +201,9 @@ function PriceDotsChart({
   const yMin = Math.min(...pts.map(d => d.p));
   const yMax = Math.max(...pts.map(d => d.p));
   const yPad = Math.max(1, Math.round((yMax - yMin) * 0.08));
-  const ymin = yMin - yPad;
-  const ymax = yMax + yPad;
+  // never go below $0
+  const ymin = Math.max(0, yMin - yPad);
+  const ymax = Math.max(yMin + 1, yMax + yPad);
 
   // margins for axes
   const ml = 64, mr = 12, mt = 12, mb = 40;
@@ -210,7 +220,7 @@ function PriceDotsChart({
   const yStart = Math.floor(ymin / yStep) * yStep;
   for (let v = yStart; v <= ymax + 0.001; v += yStep) yTicks.push(v);
 
-  const xTicks = biweeklyTicks(xMin, xMax);
+  const xTicks = monthTicks(xMin, xMax);
 
   // line path (dotted like your screenshot)
   const path = pts.map((d, i) => `${i ? 'L' : 'M'}${x(d.t)},${y(d.p)}`).join(' ');
@@ -218,13 +228,42 @@ function PriceDotsChart({
   // x labels (rotate)
   const fmtX = (t: number) => {
     const d = new Date(t);
-    return d.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: '2-digit' });
+    return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
   };
 
+  // Tooltip helpers (find nearest point)
+  function onMove(e: React.MouseEvent<SVGSVGElement>) {
+    const rect = (e.target as SVGElement).closest('svg')!.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    // invert x: find t from mx
+    const tGuess = xMin + ((mx - ml) / Math.max(1, W - ml - mr)) * (xMax - xMin);
+
+    // nearest by x (binary search would be fine; linear is OK for <= 2k)
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const d = Math.abs(pts[i].t - tGuess);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    const p = pts[bestIdx];
+    setTip({ x: x(p.t), y: y(p.p), label: dollars(p.p) });
+  }
+  function onLeave() { setTip(null); }
+
   return (
-    <div ref={wrap} className="rounded border p-3">
-      <div className="text-xs opacity-70 mb-1">Price timeline (bi-weekly ticks)</div>
-      <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+    <div ref={wrap} className="rounded border p-3 relative">
+      <div className="text-xs opacity-70 mb-1">Price timeline (monthly ticks)</div>
+      <svg
+        width="100%"
+        height={H}
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        onMouseMove={onMove}
+        onMouseLeave={onLeave}
+        style={{ display: 'block' }}
+      >
         {/* grid (y) */}
         {yTicks.map((v, i) => (
           <g key={`gy${i}`}>
@@ -258,7 +297,30 @@ function PriceDotsChart({
             <circle cx={x(d.t)} cy={y(d.p)} r={3} stroke="currentColor" fill="currentColor" />
           </g>
         ))}
+
+        {/* hover marker */}
+        {tip && (
+          <>
+            <line x1={tip.x} x2={tip.x} y1={mt} y2={H - mb} stroke="currentColor" opacity="0.15" />
+            <circle cx={tip.x} cy={tip.y} r={5} fill="currentColor" opacity="0.9" />
+          </>
+        )}
       </svg>
+
+      {/* tooltip */}
+      {tip && (
+        <div
+          style={{
+            position: 'absolute',
+            left: Math.min(Math.max(tip.x + 8, 8), (wrap.current?.clientWidth ?? W) - 120),
+            top: Math.max(tip.y - 28, 8),
+            pointerEvents: 'none',
+          }}
+          className="px-2 py-1 rounded border bg-[var(--card)] text-xs shadow"
+        >
+          {tip.label}
+        </div>
+      )}
     </div>
   );
 }
@@ -324,7 +386,7 @@ function InsightsPanel({
                 <Kpi label="Max" value={fmtMoney(insights.stats.max)} />
               </div>
 
-              {/* New bi-weekly chart with dots */}
+              {/* Monthly chart with dots + tooltip */}
               <PriceDotsChart points={pricePoints} />
 
               {/* Top tags */}
@@ -410,7 +472,7 @@ export default function SearchPage() {
     if (n === 'wovr na' || n === 'wovr n a') return 'WOVR N/A';
     // default: keep original casing
     return raw;
-    };
+  };
 
   // Load dropdown options – uses your RPCs
   async function loadAllOptions(makeFilter?: string) {
